@@ -8,7 +8,7 @@ import { VERSION } from "./version.js";
  * fields, which a reader ignores; a major bump changes or removes one, and a reader that does not
  * know that major refuses the document.
  */
-export const FORMAT_VERSION = "1.0";
+export const FORMAT_VERSION = "1.1";
 
 /** 0: it worked. 1: it ran and something failed. 2: it was used wrongly. error.code says which. */
 export const EXIT = { ok: 0, failed: 1, usage: 2 } as const;
@@ -20,11 +20,13 @@ export interface NextStep {
   description: string;
 }
 
-/** The API's own RFC 9457 problem, as it answered. Never a body. */
+/** The API's or the platform's own RFC 9457 problem, as it answered. Never a body. */
 export interface Problem {
   type: string;
   title: string;
   status: number;
+  /** The problem's own `code` member, when it has one. Added in format 1.1. */
+  code?: string;
   requestId?: string;
 }
 
@@ -74,6 +76,35 @@ export const OUTPUT_VARIABLE = "HAAU3_OUTPUT";
  */
 export const CODEX_MARKERS = ["CODEX_SANDBOX", "CODEX_THREAD_ID", "CODEX_SANDBOX_NETWORK_DISABLED", "CODEX_CI"] as const;
 
+/**
+ * Variables other coding agents set in the shells they run, as other command lines that detect
+ * agents read them (the list as read on 2026-11-11). Some of these agents can give a command a
+ * pseudo-terminal too, so any one of them means an agent is reading. The bare AGENT variable is left
+ * out: too many other programs set it.
+ */
+export const AGENT_MARKERS = [
+  ...CODEX_MARKERS,
+  "CODEX_INTERNAL_ORIGINATOR_OVERRIDE",
+  "CLAUDECODE",
+  "CLAUDE_CODE_ENTRYPOINT",
+  "CLINE_ACTIVE",
+  "CURSOR_AGENT",
+  "GEMINI_CLI",
+  "HERMES_AGENT",
+  "GROK_AGENT",
+  "GROK_SESSION_ID",
+  "OPENCODE",
+  "OPENCLAW_SHELL",
+  "KIRO_SESSION_ID",
+  "ANTIGRAVITY_CLI_ALIAS",
+  "AI_AGENT",
+] as const;
+
+/** Whether a coding agent runs this command, by the markers above. Set but empty is not set. */
+export function agentDetected(env: NodeJS.ProcessEnv): boolean {
+  return AGENT_MARKERS.some((name) => Boolean(env[name]?.trim()));
+}
+
 /** The format the caller asked for, by --json or HAAU3_OUTPUT, or null. --help and --version follow only this. */
 export function askedFormat(jsonFlag: boolean, env: NodeJS.ProcessEnv): Format | null {
   if (jsonFlag) return "json";
@@ -85,6 +116,6 @@ export function askedFormat(jsonFlag: boolean, env: NodeJS.ProcessEnv): Format |
 export function chooseFormat(jsonFlag: boolean, stdoutIsTTY: boolean, env: NodeJS.ProcessEnv): Format {
   const asked = askedFormat(jsonFlag, env);
   if (asked) return asked;
-  if (CODEX_MARKERS.some((name) => Boolean(env[name]))) return "json";
+  if (agentDetected(env)) return "json";
   return stdoutIsTTY ? "text" : "json";
 }
