@@ -5,14 +5,26 @@
 // and not, as text and as JSON, through every answer, and nothing it prints may hold any of them. A
 // new command joins the day it is added. The refresh token is never kept or sent anywhere either. The
 // controls prove the check catches a leak and that each secret really is planted.
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { format, inspect } from "node:util";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { findKey } from "../src/key.js";
 import { AccessToken, DeviceCode } from "../src/signin/secret.js";
-import { ACCESS_TOKEN, DEVICE_CODE, FakeServer, REFRESH_TOKEN, SIGN_IN_MARKERS, type TokenAnswer, type WhoamiAnswer } from "./fake-server.js";
+import {
+  ACCESS_TOKEN,
+  DEVICE_CODE,
+  FakeServer,
+  NEW_KEY_CORE,
+  NEW_KEY_MARKERS,
+  newKey,
+  REFRESH_TOKEN,
+  SIGN_IN_MARKERS,
+  type KeysAnswer,
+  type TokenAnswer,
+  type WhoamiAnswer,
+} from "./fake-server.js";
 import { fakeClock, memoryKeyring, runCli, spawnCli, spawnCliAsync, testStore, unreachableKeyring } from "./helpers.js";
 
 // Built from parts, so no file in this repository holds a whole key-shaped string.
@@ -21,7 +33,7 @@ const IN_ENVIRONMENT = ["haau3", "sk", "live", `${CORE}env`].join("_");
 const IN_ENV_LOCAL = ["haau3", "sk", "test", `${CORE}local`].join("_");
 const IN_ENV = ["haau3", "sk", "live", `${CORE}dotenv`].join("_");
 const NEIGHBOUR = ["PLANTED", "NEIGHBOUR", "e41b07"].join("");
-const PLANTED = [IN_ENVIRONMENT, IN_ENV_LOCAL, IN_ENV, CORE, NEIGHBOUR, ...SIGN_IN_MARKERS];
+const PLANTED = [IN_ENVIRONMENT, IN_ENV_LOCAL, IN_ENV, CORE, NEIGHBOUR, ...SIGN_IN_MARKERS, ...NEW_KEY_MARKERS];
 
 /** Throws, without repeating it, when `text` holds anything planted. */
 function assertClean(text: string, where: string): void {
@@ -58,6 +70,18 @@ const COMMANDS: [string, string[]][] = [
   ["the key after login", ["login", IN_ENVIRONMENT]],
   ["the key as --complete's value", ["login", `--complete=${IN_ENVIRONMENT}`]],
   ["the key after whoami", ["whoami", IN_ENVIRONMENT]],
+  ["keys create", ["keys", "create"]],
+  ["keys create --test", ["keys", "create", "--test"]],
+  ["keys create --replace", ["keys", "create", "--replace"]],
+  ["keys alone", ["keys"]],
+  ["the key after keys", ["keys", IN_ENVIRONMENT]],
+  ["the key after keys create", ["keys", "create", IN_ENVIRONMENT]],
+  ["the key as --name's value", ["keys", "create", `--name=${IN_ENVIRONMENT}`]],
+  ["the key after --name", ["keys", "create", "--name", IN_ENVIRONMENT]],
+  ["the key as --env-file's value", ["keys", "create", `--env-file=${IN_ENVIRONMENT}`]],
+  ["the key after --env-file", ["keys", "create", "--env-file", IN_ENVIRONMENT]],
+  ["the key as an env file's name", ["keys", "create", "--env-file", `.env${IN_ENVIRONMENT}`]],
+  ["the key as --test's value", ["keys", "create", `--test=${IN_ENVIRONMENT}`]],
 ];
 
 let project: string;
@@ -189,6 +213,94 @@ describe("no command prints a planted secret", () => {
     const out = await spawnCliAsync(["logout"], { cwd: project, env });
     expect(out.code).toBe(0);
     assertClean(out.stdout + out.stderr, "logout");
+  });
+});
+
+/** Every file under a folder, with its text. */
+function filesUnder(folder: string): [string, string][] {
+  return readdirSync(folder, { recursive: true, withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry) => {
+      const path = join(entry.parentPath, entry.name);
+      return [path, readFileSync(path, "utf8")] as [string, string];
+    });
+}
+
+/** What the stand-in can answer when a key is asked for, each run through every way of running. */
+const KEY_ANSWERS: KeysAnswer[] = ["created", "garbled", "wrong-mode", "bad-secret", "unauthorized", "not-a-member", "unavailable", "off", "no-answer"];
+
+describe("a new key is written to the env file and nowhere else", () => {
+  for (const answer of KEY_ANSWERS) {
+    it(`when the platform answers ${answer}`, async () => {
+      for (const person of [false, true]) {
+        for (const output of ["", "json", "text"]) {
+          for (const keyring of [memoryKeyring(), unreachableKeyring()]) {
+            const keys = mkdtempSync(join(tmpdir(), "cli-secrets-keys-"));
+            try {
+              writeFileSync(join(keys, ".env"), `NEIGHBOUR_TOKEN=${NEIGHBOUR}\r\nHAAU3_API_KEY=${IN_ENV}\r\n`);
+              Object.assign(server, { tokenAnswers: ["approved"], whoamiAnswer: "ok", revokeStatus: 200, keysAnswer: "created" });
+              const store = testStore(dir, keyring);
+              const env = { HAAU3_API_KEY: IN_ENVIRONMENT, HAAU3_OUTPUT: output, HAAU3_PLATFORM_URL: server.url };
+              const io = { store, ...fakeClock(), ...(person ? { stdin: { isTTY: true }, openBrowser: async () => true, enter: () => ({ pressed: Promise.resolve(), stop() {} }) } : {}) };
+              const run = async (args: string[]) => {
+                const out = await runCli(args, { tty: person, env, cwd: keys, io });
+                assertClean(out.stdout, `stdout of ${args.join(" ")}`);
+                assertClean(out.stderr, `stderr of ${args.join(" ")}`);
+                return out;
+              };
+              await run(["login"]);
+              await run(["login", "--complete"]);
+              await run(["keys", "create"]);
+              server.keysAnswer = answer;
+              await run(["keys", "create", "--replace"]);
+              server.keysAnswer = "created";
+              await run(["keys", "create", "--test", "--env-file", "sandbox.env"]);
+              await run(["whoami"]);
+              await run(["logout"]);
+              await store.clear(server.url);
+
+              // The live key is in .env, which kept its neighbour and its line endings, only when it was made.
+              const files = filesUnder(keys);
+              const holding = (secret: string) => files.filter(([, text]) => text.includes(secret)).map(([path]) => path);
+              if (answer === "created") {
+                expect(holding(newKey("live"))).toEqual([join(keys, ".env")]);
+                expect(readFileSync(join(keys, ".env"), "utf8")).toBe(`NEIGHBOUR_TOKEN=${NEIGHBOUR}\r\nHAAU3_API_KEY=${newKey("live")}\r\n`);
+              } else {
+                expect(holding(newKey("live"))).toEqual([]);
+                expect(readFileSync(join(keys, ".env"), "utf8")).toBe(`NEIGHBOUR_TOKEN=${NEIGHBOUR}\r\nHAAU3_API_KEY=${IN_ENV}\r\n`);
+              }
+              // A refused session is ended, so the test key that follows is never made.
+              const ended = answer === "unauthorized" || answer === "not-a-member";
+              expect(holding(newKey("test"))).toEqual(ended ? [] : [join(keys, "sandbox.env")]);
+              // Nowhere else: not the session's stores, and not anything sent anywhere.
+              for (const [path, text] of filesUnder(dir)) expect(text.includes(NEW_KEY_CORE), path).toBe(false);
+              if ("entries" in keyring) expect([...keyring.entries.values()].join("")).not.toContain(NEW_KEY_CORE);
+              expect(server.requests.map((r) => r.body + JSON.stringify(r.headers)).join("")).not.toContain(NEW_KEY_CORE);
+            } finally {
+              rmSync(keys, { recursive: true, force: true });
+            }
+          }
+        }
+      }
+    });
+  }
+
+  it("as a real process, the session in a file", async () => {
+    server.interval = 1;
+    const keys = mkdtempSync(join(tmpdir(), "cli-secrets-keys-"));
+    try {
+      const env = { HAAU3_API_KEY: IN_ENVIRONMENT, HAAU3_PLATFORM_URL: server.url, HAAU3_SESSION_STORE: "file", HAAU3_CONFIG_DIR: dir };
+      for (const args of [["login"], ["login", "--complete"], ["keys", "create"], ["keys", "create"], ["logout"]]) {
+        const out = await spawnCliAsync(args, { cwd: keys, env });
+        assertClean(out.stdout, `stdout of ${args.join(" ")}`);
+        assertClean(out.stderr, `stderr of ${args.join(" ")}`);
+      }
+      expect(readFileSync(join(keys, ".env"), "utf8")).toBe(`HAAU3_API_KEY=${newKey("live")}\n`);
+      expect(filesUnder(keys).map(([path]) => path)).toEqual([join(keys, ".env")]);
+      for (const [path, text] of filesUnder(dir)) expect(text.includes(NEW_KEY_CORE), path).toBe(false);
+    } finally {
+      rmSync(keys, { recursive: true, force: true });
+    }
   });
 });
 
