@@ -16,8 +16,9 @@ This version prints its version and its help, and sets the output every command 
 
 At a terminal, haau3 prints readable text. When its output goes anywhere else, such as a pipe, a
 file or a coding agent, a command prints one JSON document on stdout, errors included, and never a
-prompt, a spinner or colour. It also prints JSON when Codex runs it, since Codex can give a command
-a terminal of its own.
+prompt, a spinner or colour. It also prints JSON when a coding agent runs it, from the variables
+Codex, Claude Code, Cursor and other agents set, since some give a command a terminal
+of its own.
 
 - `--json` asks for the JSON document at a terminal too.
 - `HAAU3_OUTPUT=json` or `HAAU3_OUTPUT=text` chooses either one, whatever the terminal.
@@ -27,7 +28,7 @@ The document:
 
 ```json
 {
-  "formatVersion": "1.0",
+  "formatVersion": "1.1",
   "cli": "haau3",
   "cliVersion": "0.1.0",
   "command": null,
@@ -50,7 +51,8 @@ The document:
   API, and `null` otherwise.
 - `error.code` is what to branch on, and `error.next` lists commands to run next. When the API's
   answer is the failure, `error.problem` carries the API's own
-  [problem](https://docs.haau3.com/errors): its `type`, `title`, `status` and `requestId`.
+  [problem](https://docs.haau3.com/errors): its `type`, `title`, `status`, `code` when it has one
+  (since 1.1), and `requestId`.
 
 Exit codes: `0`, it worked; `1`, it ran and something failed; `2`, it was used wrongly.
 
