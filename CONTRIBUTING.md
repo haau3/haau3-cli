@@ -1,0 +1,51 @@
+# Contributing
+
+Issues are welcome: a bug, a confusing message, a check that should exist.
+
+## Working on the command line
+
+```sh
+pnpm install
+pnpm test
+pnpm typecheck
+pnpm lint
+pnpm build
+pnpm check:package
+pnpm check:bin
+```
+
+Node 24 and pnpm 12. pnpm installs no version of anything published in the last three days.
+
+`pnpm check:bin` packs the package as npm publishes it, installs it into a new project and runs it
+there, the way `npx haau3` does. CI runs it on Linux, macOS and Windows.
+
+## Rules every command keeps
+
+- **The output contract** (`src/output.ts`, the README's "Output"): one JSON document on stdout when
+  output is not a terminal, readable text at one, exit codes 0, 1 and 2. A change to the document
+  that removes or changes a field raises `formatVersion`'s major version; one that only adds raises
+  its minor.
+- **An API key is never printed, logged or put in an error.** `src/key.ts` holds a key in `ApiKey`,
+  which prints as `[haau3 key hidden]` however it is printed. `test/secrets.test.ts` plants a made-up
+  key in the environment and in both env files, runs every command, and fails if the key shows
+  anywhere; a command joins it the day it is added.
+- **No runtime dependency** beyond the haau3 SDK, when a command calls the API.
+- **Nothing the user typed is repeated back** unless it has the shape of a command or a flag name.
+
+## Pull requests and releases
+
+Pull requests are squash-merged, and a PR's title becomes its commit on `main`.
+[release-please](https://github.com/googleapis/release-please) reads those titles and keeps one
+release PR open with the next version and its changelog:
+
+- `feat: ...` and `fix: ...` release a patch, 0.1.1 to 0.1.2.
+- `feat!: ...` releases a minor, 0.1.1 to 0.2.0. While the command line is `0.y.z`, a minor is the
+  only release that may change what a command takes or prints.
+- Any other title (`docs: ...`, `chore: ...`, `test: ...`) releases nothing.
+
+The title is the line a reader sees in `CHANGELOG.md`, so it says what changed for someone using the
+command line. Like every file, commit message and PR description here, it says only what this
+repository shows: CI's "Public text" check (`pnpm check:public-text`) fails on anything that refers
+elsewhere, such as an issue number without its repository. Merging the release PR makes the GitHub
+Release and its tag, and `release.yml` stages that version on npm with provenance. It is published
+once a maintainer approves it on npm.
