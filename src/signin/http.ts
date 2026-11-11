@@ -112,18 +112,27 @@ export function displayText(value: unknown, max = 300): string | undefined {
 const CODE = /^[a-z0-9][a-z0-9_-]{0,59}$/;
 const REQUEST_ID = /^[\w.:-]{1,100}$/;
 
+/** A key's marker: a problem's member holding one is not repeated, whatever sent it. */
+const KEY_MARKER = /haau3_sk_/i;
+
+/** A member of the problem fit to print: within its length, nothing unsafe, and no key in it. */
+function member(value: unknown, max: number): string | undefined {
+  const shown = text(value, max);
+  return shown && !KEY_MARKER.test(shown) ? shown : undefined;
+}
+
 /** The answer's RFC 9457 problem: its type, title, status, code and request id, never its detail. */
 export function problemOf(result: { status: number; headers: Headers; body: unknown }): Problem {
   const body = isRecord(result.body) ? result.body : {};
   const problem: Problem = {
-    type: text(body.type, 300) ?? "about:blank",
-    title: text(body.title, 120) ?? `HTTP ${result.status}`,
+    type: member(body.type, 300) ?? "about:blank",
+    title: member(body.title, 120) ?? `HTTP ${result.status}`,
     status: result.status,
   };
-  const code = typeof body.code === "string" && CODE.test(body.code) ? body.code : undefined;
+  const code = typeof body.code === "string" && CODE.test(body.code) && !KEY_MARKER.test(body.code) ? body.code : undefined;
   if (code) problem.code = code;
   const requestId = result.headers.get("x-request-id");
-  if (requestId && REQUEST_ID.test(requestId)) problem.requestId = requestId;
+  if (requestId && REQUEST_ID.test(requestId) && !KEY_MARKER.test(requestId)) problem.requestId = requestId;
   return problem;
 }
 

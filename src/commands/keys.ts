@@ -14,7 +14,7 @@ import type { CliError, NextStep } from "../output.js";
 import { createKey, type KeyMode, type MadeKey } from "../signin/keys.js";
 import { COMPLETE_STEP, done, failed, LOGIN_STEP, misused, nextText, WHOAMI_STEP, when, type Context, type Result } from "./context.js";
 import { organizationError } from "./login.js";
-import { endSession, loadRecord } from "./session.js";
+import { endStoredSession, loadRecord } from "./session.js";
 
 const COMMAND = "keys create";
 
@@ -28,7 +28,8 @@ export interface KeysCreateOptions {
   test: boolean;
   replace: boolean;
   name: string | undefined;
-  envFile: string | undefined;
+  /** The env file to write, as given with --file. */
+  file: string | undefined;
 }
 
 /** `text` cut to at most `max` UTF-16 code units, never through a character. */
@@ -75,16 +76,21 @@ export function checkName(value: string): NameCheck {
   return { ok: true, name };
 }
 
-/** A path as a command line takes it: quoted when it holds a space or a quote. */
-function arg(path: string): string {
-  return /[\s"'`$]/.test(path) ? JSON.stringify(path) : path;
+/**
+ * A path as a shell takes it, to put in a command someone, or an agent, will run: as it is when it
+ * holds only characters no shell reads, else in single quotes, inside which neither a POSIX shell nor
+ * PowerShell expands anything. A quote inside is closed and reopened as each shell spells it.
+ */
+export function arg(path: string, platform: NodeJS.Platform = process.platform): string {
+  if (/^[A-Za-z0-9._/\\:@+~-]+$/.test(path)) return path;
+  return platform === "win32" ? `'${path.replaceAll("'", "''")}'` : `'${path.replaceAll("'", `'\\''`)}'`;
 }
 
 /** The same command again, with the flags it was run with and any added: never the name. */
 function rerun(options: KeysCreateOptions, target: { shown: string } | null, add: { replace?: boolean } = {}): string {
   const parts = ["npx haau3 keys create"];
   if (options.test) parts.push("--test");
-  if (options.envFile !== undefined && target) parts.push(`--env-file ${arg(target.shown)}`);
+  if (options.file !== undefined && target) parts.push(`--file ${arg(target.shown)}`);
   if (options.replace || add.replace) parts.push("--replace");
   return parts.join(" ");
 }
@@ -94,9 +100,15 @@ function again(options: KeysCreateOptions, target: { shown: string } | null): Ne
   return { command: rerun(options, target), description: `Make the key and write it.${named}` };
 }
 
-/** A line for a .gitignore that matches this file's name and nothing else. */
-function gitignoreLine(name: string): string {
-  return name.replace(/[\\*?[]/g, (c) => `\\${c}`).replace(/^([!#])/, "\\$1");
+/**
+ * A line for a .gitignore that matches this file's name: git's pattern characters escaped, a leading
+ * `!` or `#` escaped, and a trailing space escaped, since git drops one that is not.
+ */
+export function gitignoreLine(name: string): string {
+  return name
+    .replace(/[\\*?[]/g, (c) => `\\${c}`)
+    .replace(/^([!#])/, "\\$1")
+    .replace(/ +$/, (spaces) => spaces.replaceAll(" ", "\\ "));
 }
 
 function gitRefusal(git: GitAnswer, target: Target, ctx: Context, options: KeysCreateOptions): CliError | null {
@@ -161,7 +173,7 @@ export async function keysCreate(ctx: Context, options: KeysCreateOptions): Prom
   }
 
   // The file, and everything about it that needs no one else.
-  const chosen = chooseFile({ cwd: ctx.cwd, envFile: options.envFile, env: ctx.env });
+  const chosen = chooseFile({ cwd: ctx.cwd, file: options.file, env: ctx.env });
   if (!chosen.ok) return chosen.usage ? misuse(chosen.error) : fail(chosen.error);
   const inspected = inspectFile(chosen.chosen);
   if (!inspected.ok) return fail(inspected.error);
@@ -176,11 +188,11 @@ export async function keysCreate(ctx: Context, options: KeysCreateOptions): Prom
   }
   if (!planFor(target, standIn(mode))) {
     const why = target.utf8
-      ? `without changing how the rest of it reads, so it changed nothing. Make ${KEY_VARIABLE}'s line a plain NAME=value line`
+      ? `without changing how the rest of it reads, so it changed nothing. Make ${KEY_VARIABLE}'s line a plain NAME=value line with ordinary line endings`
       : `in place, since it is not UTF-8 text and rewriting it could change other bytes, so it changed nothing. Remove ${KEY_VARIABLE}'s line from it`;
     return fail({
       code: "cannot-edit",
-      message: `haau3 could not set ${KEY_VARIABLE} in ${target.shown} ${why}, or name another file with --env-file.`,
+      message: `haau3 could not set ${KEY_VARIABLE} in ${target.shown} ${why}, or name another file with --file.`,
       next: [],
     });
   }
@@ -198,10 +210,7 @@ export async function keysCreate(ctx: Context, options: KeysCreateOptions): Prom
     const unseen = keyringUnreachable ? " The system's credential store could not be reached, so a session kept there could not be checked." : "";
     return fail({ code: "not-signed-in", message: `Not signed in.${unseen} Sign in, then run this again.`, next: [LOGIN_STEP] });
   }
-  const endHere = async () => {
-    await endSession(session);
-    await ctx.store.save(address, { pending: record.pending });
-  };
+  const endHere = () => endStoredSession(ctx, address, session);
   if (session.expiresAt <= ctx.now()) {
     await endHere();
     return fail({ code: "session-ended", message: `The session ended at ${when(session.expiresAt, ctx.now())}. Sign in again, then run this again.`, next: [LOGIN_STEP] });

@@ -59,13 +59,15 @@ export async function createKey(platformURL: string, token: AccessToken, request
   if (answer.status === 201) {
     const key = parseCreated(answer.body, request.mode);
     if (key) return { kind: "ok", key };
-    const made = madeKey(answer.body);
+  }
+  if (answer.status >= 200 && answer.status < 300) {
+    // Any success may have made a key: one this command cannot use, and nobody else holds.
     return {
       kind: "unknown",
-      made,
+      made: madeKey(answer.body),
       error: {
         code: "unexpected-answer",
-        message: `${host} made a key but answered in a way haau3 cannot use, so nothing was written. Revoke it on the keys page at ${platformURL}/dashboard/keys.`,
+        message: `${host} answered in a way haau3 cannot use (HTTP ${answer.status}), so nothing was written, and it may have made a key. Revoke any you do not recognise on the keys page at ${platformURL}/dashboard/keys.`,
         next: [{ command: "npx haau3@latest --version", description: "Check for a newer haau3." }],
       },
     };
@@ -76,35 +78,76 @@ export async function createKey(platformURL: string, token: AccessToken, request
     return { kind: "no-organization", code: problem.code, problem };
   }
   if (answer.status === 404) return { kind: "error", error: { ...signInUnavailable(platformURL), problem } };
-  if (answer.status >= 500) return { kind: "error", error: platformUnavailable(host, answer) };
+  if (answer.status >= 500) {
+    // The platform bounds how long it waits for the database without stopping the write, so an error
+    // can come back for a key that was made. Trying again without looking would make a second one.
+    const unavailable = platformUnavailable(host, answer);
+    return {
+      kind: "unknown",
+      made: null,
+      error: { ...unavailable, message: `${unavailable.message} It may have made a key anyway: look on the keys page at ${platformURL}/dashboard/keys before trying again, and revoke any you do not recognise.` },
+    };
+  }
   return {
     kind: "error",
     error: { code: "unexpected-answer", message: `${host} refused to make the key (HTTP ${answer.status}).`, next: [{ command: "npx haau3@latest --version", description: "Check for a newer haau3." }], problem },
   };
 }
 
+/** A key's id as the platform gives one: a uuid today, and nothing a terminal or a shell would act on. */
+const ID = /^[A-Za-z0-9_-]{1,64}$/;
+
+/** The part of a key the keys page shows: the mode's prefix and six characters, exactly. */
+const PREFIX = /^haau3_sk_(?:live|test)_[A-Za-z0-9_-]{6}$/;
+
+/**
+ * Whether a value the answer gives beside the key holds any of it: a key's marker, or eight characters
+ * running of the key's random part (the prefix the keys page shows holds six). Only a broken platform
+ * would send one, and then it is never printed.
+ */
+export function holdsKey(value: string, secret: unknown): boolean {
+  if (/haau3_sk_/i.test(value)) return true;
+  if (typeof secret !== "string") return false;
+  const random = secret.replace(/^haau3_sk_(?:live|test)_/, "");
+  for (let i = 0; i + 8 <= random.length; i++) if (value.includes(random.slice(i, i + 8))) return true;
+  return false;
+}
+
 /** The 201, or undefined unless it holds exactly a key of the mode asked for and the facts about it. */
 export function parseCreated(body: unknown, mode: KeyMode): CreatedKey | undefined {
   if (!isRecord(body)) return undefined;
-  const id = text(body.id, 200);
-  const name = displayText(body.name, 200);
-  const prefix = text(body.keyPrefix, 100);
   const secret = body.secret;
   const start = `haau3_sk_${mode}_`;
-  if (!id || !name || !prefix || body.mode !== mode || typeof secret !== "string") return undefined;
+  if (body.mode !== mode || typeof secret !== "string") return undefined;
   if (!secret.startsWith(start) || !KEY_RANDOM.test(secret.slice(start.length))) return undefined;
-  if (!prefix.startsWith(start) || prefix.length <= start.length || prefix.length >= secret.length || !secret.startsWith(prefix)) return undefined;
+  const id = shownId(body.id, secret);
+  const name = shownName(body.name, secret);
+  const prefix = shownKeyPrefix(body.keyPrefix);
+  if (!id || !name || !prefix || !prefix.startsWith(start) || !secret.startsWith(prefix)) return undefined;
   return { id, name, prefix, mode, secret: new ApiKey(secret) };
 }
 
-/** What can be said of a key from an answer that could not be used: never its secret. */
+function shownId(value: unknown, secret: unknown): string | undefined {
+  const id = text(value, 64);
+  return id && ID.test(id) && !holdsKey(id, secret) ? id : undefined;
+}
+
+function shownName(value: unknown, secret: unknown): string | undefined {
+  const name = displayText(value, 200);
+  return name && !holdsKey(name, secret) ? name : undefined;
+}
+
+function shownKeyPrefix(value: unknown): string | undefined {
+  const prefix = text(value, 30);
+  return prefix && PREFIX.test(prefix) ? prefix : undefined;
+}
+
+/** What can be said of a key from an answer that could not be used: never any of its secret. */
 function madeKey(body: unknown): MadeKey | null {
   if (!isRecord(body)) return null;
-  const prefix = text(body.keyPrefix, 100);
   return {
-    id: text(body.id, 200) ?? null,
-    name: displayText(body.name, 200) ?? null,
-    // A prefix is named only when it is short enough to be one, so a whole key is never repeated.
-    prefix: prefix && /^haau3_sk_(?:live|test)_[A-Za-z0-9_-]{1,12}$/.test(prefix) ? prefix : null,
+    id: shownId(body.id, body.secret) ?? null,
+    name: shownName(body.name, body.secret) ?? null,
+    prefix: shownKeyPrefix(body.keyPrefix) ?? null,
   };
 }

@@ -30,7 +30,7 @@ export const HELP: Help = {
     },
     { name: "keys create --test", description: "Make a test key instead, which reaches the Sandbox only." },
     { name: "keys create --name <name>", description: "Name the key. By default the name says haau3 made it, for which folder and on which day." },
-    { name: "keys create --env-file <file>", description: "Write to this env file. By default the one that holds the key, else .env.local, else .env." },
+    { name: "keys create --file <file>", description: "Write to this env file. By default the one that holds the key, else .env.local, else .env." },
     { name: "keys create --replace", description: "Replace a key the file already holds. The old key is not revoked." },
   ],
   options: [

@@ -1,7 +1,7 @@
 // Where `haau3 keys create` writes the key, and how, so that the env file is the only file it changes
 // and everything else in it is left exactly as it was.
 //
-// The file is the one named with --env-file; else whichever of .env.local and .env already holds
+// The file is the one named with --file; else whichever of .env.local and .env already holds
 // HAAU3_API_KEY, in the order the key finder reads them; else .env.local if it exists, then .env;
 // else a new one: .env.local for a project on Next.js or Vite, whose loaders read it, and .env for
 // everything else, which is the file Node's loadEnvFile(), python-dotenv, godotenv and Deno read.
@@ -29,14 +29,15 @@ const SHOWN_RANDOM = 6;
 /** The characters a key is made of after its prefix. */
 const KEY_BODY = /^haau3_sk_(?:live|test)_[A-Za-z0-9_-]{20,200}$/;
 
-/** An env file's name, as --env-file must give it: .env, .env.local, .env.production, prod.env. */
+/** An env file's name, as --file must give it: .env, .env.local, .env.production, prod.env. */
 const ENV_FILE_NAME = /(^\.env)|(\.env$)/;
+
+/** The characters --file may use: a path's, and none a shell or a terminal acts on. */
+const PLAIN_PATH = /^[A-Za-z0-9._/\\:@+~ -]+$/;
 
 /** A key's marker anywhere: a value holding it was a key pasted in the wrong place. */
 const KEY_MARKER = /haau3_sk_/i;
 
-/** Characters a terminal can act on, or that change how text reads without showing. */
-const UNSAFE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u;
 
 /** A line that sets the variable: optional indent, optional `export`, the name, then `=`. */
 const DEFINITION = /^(\uFEFF?[ \t]*(?:export[ \t]+)?)HAAU3_API_KEY[ \t]*=/;
@@ -121,30 +122,33 @@ export function readsEnvLocal(folder: string): boolean {
 /** Which file to write, by the rules at the top of this file, or why none can be chosen. */
 export function chooseFile({
   cwd,
-  envFile,
+  file,
   env,
   platform = process.platform,
 }: {
   cwd: string;
-  envFile: string | undefined;
+  /** The file named with --file. */
+  file: string | undefined;
   env: NodeJS.ProcessEnv;
   platform?: NodeJS.Platform;
 }): ChooseResult {
-  if (envFile !== undefined) {
-    // Checked before anything repeats it: only an env file's name, and never a key.
-    const name = basename(envFile);
-    if (envFile.length > 1024 || KEY_MARKER.test(envFile) || UNSAFE.test(envFile) || !ENV_FILE_NAME.test(name)) {
+  if (file !== undefined) {
+    // Checked before anything repeats it: an env file's name, in characters no shell reads, and never
+    // a key. The path is printed back, and put in commands an agent may run.
+    const name = basename(file);
+    if (file.length > 1024 || KEY_MARKER.test(file) || !PLAIN_PATH.test(file) || !ENV_FILE_NAME.test(name)) {
       return {
         ok: false,
         usage: true,
         error: {
-          code: "invalid-env-file",
-          message: "--env-file must name an env file: a file whose name starts or ends with .env, such as .env.local or prod.env.",
+          code: "invalid-file",
+          message:
+            "--file must name an env file: a file whose name starts or ends with .env, such as .env.local or prod.env, in a path of letters, digits, spaces and . _ - / \\ : @ + ~ only.",
           next: [{ command: "npx haau3 keys create", description: "Write to the project's own env file instead." }],
         },
       };
     }
-    const path = resolve(cwd, envFile);
+    const path = resolve(cwd, file);
     return { ok: true, chosen: { path, shown: shownPath(path, cwd), reason: "named" } };
   }
 
@@ -214,9 +218,12 @@ export function inspectFile(chosen: Chosen): InspectResult {
   }
 
   if (stat.isSymbolicLink()) {
-    return refuse("env-file-symlink", `${shown} is a symbolic link. haau3 writes a key only to a file itself, since a link can lead to a file that git keeps. Replace the link with the file, or name the file with --env-file.`);
+    return refuse("env-file-symlink", `${shown} is a symbolic link. haau3 writes a key only to a file itself, since a link can lead to a file that git keeps. Replace the link with the file, or name the file with --file.`);
   }
   if (!stat.isFile()) return refuse("env-file-not-a-file", `${shown} is not a file.`);
+  if (stat.nlink > 1) {
+    return refuse("env-file-hard-link", `${shown} has other names (hard links), one of which git could keep, so haau3 does not write a key to it. Name a file of its own with --file.`);
+  }
   if (stat.size > MAX_ENV_FILE_BYTES) return refuse("env-file-too-large", `${shown} is larger than an env file should be (1 MiB), so haau3 leaves it alone.`);
   let bytes: Buffer;
   try {
@@ -225,10 +232,22 @@ export function inspectFile(chosen: Chosen): InspectResult {
   } catch {
     return refuse("env-file-not-writable", `haau3 cannot read and write ${shown}.`);
   }
+  if (!isText(bytes)) {
+    return refuse("env-file-not-text", `${shown} is not a text file haau3 can read (it holds NUL bytes, as UTF-16 does), so haau3 leaves it alone. Save it as UTF-8, or name another file with --file.`);
+  }
   const content = bytes.toString("utf8");
   const value = valueIn(content);
   const existing = present(value) ? { prefix: shownPrefix(value.trim()) } : null;
   return { ok: true, target: { ...chosen, content, utf8: isUtf8(bytes), existing } };
+}
+
+/**
+ * Whether bytes are text that Node's parser, and this edit, read the way the application will: no NUL
+ * byte, which UTF-16 (what Windows PowerShell 5 writes) is full of. A key appended to such a file
+ * would be in another encoding from the rest, and a key already in it would not be seen.
+ */
+function isText(bytes: Buffer): boolean {
+  return !bytes.includes(0);
 }
 
 /** The edit for this file, or null when there is none that is safe: planEdit's, and a rewrite only of UTF-8 text. */
@@ -254,6 +273,9 @@ export type Edit =
 export function planEdit(content: string | null, value: string): Edit | null {
   const line = `${KEY_VARIABLE}=${value}`;
   if (content === null) return { kind: "create", text: `${line}\n` };
+  // A carriage return on its own ends a line for some loaders (dotenv) and is dropped by Node's parser,
+  // so the read-back could not see a line it separates: such a file is not edited.
+  if (/\r(?!\n)/.test(content)) return null;
 
   const eol = content.includes("\r\n") ? "\r\n" : "\n";
   const lines = content.split(/(?<=\n)/);
@@ -328,6 +350,7 @@ export function writeKey(target: Target, key: ApiKey, replace: boolean): WriteRe
     const now = lstatSync(target.path);
     if (now.isSymbolicLink()) return { ok: false, reason: "it is now a symbolic link" };
     const bytes = readFileSync(fd);
+    if (!isText(bytes)) return { ok: false, reason: "it is no longer a text file" };
     const content = bytes.toString("utf8");
     if (!replace && present(valueIn(content))) return { ok: false, reason: "a key was written to it meanwhile" };
     const edit = planEdit(content, value);

@@ -62,9 +62,11 @@ const KEYS = new Map<string, Command>([
   [
     "create",
     {
-      options: { test: { type: "boolean" }, replace: { type: "boolean" }, name: { type: "string" }, "env-file": { type: "string" } },
+      // Not --env-file: Node takes that flag as its own wherever it appears, even after the script, and
+      // would load the file or print its name before this code runs.
+      options: { test: { type: "boolean" }, replace: { type: "boolean" }, name: { type: "string" }, file: { type: "string" } },
       run: (ctx, values) =>
-        keysCreate(ctx, { test: values.test === true, replace: values.replace === true, name: stringValue(values.name), envFile: stringValue(values["env-file"]) }),
+        keysCreate(ctx, { test: values.test === true, replace: values.replace === true, name: stringValue(values.name), file: stringValue(values.file) }),
     },
   ],
 ]);
@@ -111,9 +113,12 @@ export async function run(argv: string[], io: Io): Promise<ExitCode> {
   const jsonFlag = argv.includes("--json");
   const format = chooseFormat(jsonFlag, Boolean(io.stdout.isTTY), io.env);
 
-  // The command is the first argument that is not a flag. No global flag takes a value, so nothing
-  // before it can be one.
-  const name = argv.slice(0, argv.includes("--") ? argv.indexOf("--") : argv.length).find((arg) => !arg.startsWith("-"));
+  // The command is the first word that names one, else the first that is not a flag. A command's flag
+  // can take a value, and given before the command its value comes first (--name x keys create), so
+  // the first word is not always the command. Once parsed, the command must be the first positional,
+  // or a flag's value took its word; either way nothing but a command's name is repeated back.
+  const words = argv.slice(0, argv.includes("--") ? argv.indexOf("--") : argv.length).filter((arg) => !arg.startsWith("-"));
+  const name = words.find((word) => COMMANDS.has(word)) ?? words[0];
   const entry = name === undefined ? undefined : COMMANDS.get(name);
   const options: ParseArgsOptionsConfig = { ...GLOBAL_OPTIONS, ...optionsOf(entry) };
 
@@ -138,7 +143,7 @@ export async function run(argv: string[], io: Io): Promise<ExitCode> {
     else io.stdout.write(helpText());
     return EXIT.ok;
   }
-  if (!entry) {
+  if (!entry || first !== name) {
     return usage(io, format, {
       code: "unknown-command",
       message: SAFE_COMMAND.test(first) ? `haau3 has no command named ${first}.` : "haau3 has no such command.",
