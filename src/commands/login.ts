@@ -21,6 +21,7 @@ import {
   COMPLETE_STEP,
   done,
   failed,
+  KEYS_CREATE_STEP,
   LOGIN_STEP,
   LOGOUT_STEP,
   misused,
@@ -53,8 +54,8 @@ const MIN_CODE_LEFT_MS = 60_000;
 /** The platform takes a session for at most an hour from the token's issue. */
 const SESSION_MS = 60 * 60_000;
 
-/** The step that follows signing in. `keys create` takes its place once that command exists. */
-const AFTER_SIGN_IN = [WHOAMI_STEP];
+/** The step that follows signing in: a key for the project. */
+const AFTER_SIGN_IN = [KEYS_CREATE_STEP];
 
 export async function login(ctx: Context, options: { complete: boolean }): Promise<Result> {
   const platform = resolvePlatform(ctx.env);
@@ -215,7 +216,7 @@ async function finish(ctx: Context, address: string, pending: PendingSignIn, out
 }
 
 function alreadySignedIn(ctx: Context, session: Session, where: Where | null): Result {
-  const steps = [WHOAMI_STEP, LOGOUT_STEP];
+  const steps = [KEYS_CREATE_STEP, WHOAMI_STEP, LOGOUT_STEP];
   const data = {
     status: "already-signed-in",
     member: session.member,

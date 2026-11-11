@@ -1,4 +1,5 @@
 // What a command is given and what it gives back, so main.ts prints every command the same way.
+import type { Environment } from "../environment.js";
 import { EXIT, failure, success, type CliError, type Document, type ExitCode, type Format, type NextStep } from "../output.js";
 import type { SessionStore, Where } from "../session/store.js";
 
@@ -7,6 +8,8 @@ export interface Context {
   /** A person at a terminal: stdin and stdout are terminals, text is printed and no agent is running. */
   interactive: boolean;
   env: NodeJS.ProcessEnv;
+  /** The folder the command runs in: the project, for a command that reads or writes its files. */
+  cwd: string;
   store: SessionStore;
   now(): number;
   sleep(ms: number): Promise<void>;
@@ -25,16 +28,16 @@ export interface Result {
   exit: ExitCode;
 }
 
-export function done(command: string, data: unknown, text: string): Result {
-  return { document: success(command, data), text, exit: EXIT.ok };
+export function done(command: string, data: unknown, text: string, environment: Environment | null = null): Result {
+  return { document: success(command, data, environment), text, exit: EXIT.ok };
 }
 
-export function failed(command: string, error: CliError): Result {
-  return { document: failure(command, error), text: "", exit: EXIT.failed };
+export function failed(command: string, error: CliError, environment: Environment | null = null): Result {
+  return { document: failure(command, error, environment), text: "", exit: EXIT.failed };
 }
 
-export function misused(command: string, error: CliError): Result {
-  return { document: failure(command, error), text: "", exit: EXIT.usage };
+export function misused(command: string, error: CliError, environment: Environment | null = null): Result {
+  return { document: failure(command, error, environment), text: "", exit: EXIT.usage };
 }
 
 /** The "Next:" block a person reads, from the same steps the document carries. */
@@ -71,6 +74,10 @@ export const COMPLETE_STEP: NextStep = {
   description: "Wait for the approval and finish signing in. If it says the approval is still pending, run it again.",
 };
 export const WHOAMI_STEP: NextStep = { command: "npx haau3 whoami", description: "See who is signed in, the plan and this month's use." };
+export const KEYS_CREATE_STEP: NextStep = {
+  command: "npx haau3 keys create",
+  description: "Make an API key and write it to this project's env file, never showing it. Add --test for a test key.",
+};
 export const LOGOUT_STEP: NextStep = { command: "npx haau3 logout", description: "Sign out, then sign in again to pick another organization." };
 
 /** Neither store would keep the session. */

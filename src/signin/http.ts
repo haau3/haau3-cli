@@ -13,6 +13,8 @@ const MAX_BODY_BYTES = 64 * 1024;
 export interface HttpRequest {
   /** Sent as application/x-www-form-urlencoded, which OAuth's endpoints take; makes it a POST. */
   form?: Record<string, string>;
+  /** Sent as application/json, which the platform's own endpoints take; makes it a POST. */
+  json?: Record<string, unknown>;
   bearer?: AccessToken;
   /** How long the request may take, the body included. 30 seconds unless the caller has less to spare. */
   timeoutMs?: number;
@@ -29,11 +31,14 @@ export async function call(url: string, request: HttpRequest = {}): Promise<Http
   if (request.form) {
     headers["Content-Type"] = "application/x-www-form-urlencoded";
     body = new URLSearchParams(request.form).toString();
+  } else if (request.json) {
+    headers["Content-Type"] = "application/json";
+    body = JSON.stringify(request.json);
   }
   if (request.bearer) headers.Authorization = `Bearer ${request.bearer.reveal()}`;
   try {
     const response = await fetch(url, {
-      method: request.form ? "POST" : "GET",
+      method: body === undefined ? "GET" : "POST",
       headers,
       body,
       redirect: "manual",

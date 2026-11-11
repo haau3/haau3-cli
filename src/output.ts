@@ -8,7 +8,7 @@ import { VERSION } from "./version.js";
  * fields, which a reader ignores; a major bump changes or removes one, and a reader that does not
  * know that major refuses the document.
  */
-export const FORMAT_VERSION = "1.1";
+export const FORMAT_VERSION = "1.2";
 
 /** 0: it worked. 1: it ran and something failed. 2: it was used wrongly. error.code says which. */
 export const EXIT = { ok: 0, failed: 1, usage: 2 } as const;
@@ -37,6 +37,11 @@ export interface CliError {
   next: NextStep[];
   /** Present when the API's answer is the failure. */
   problem?: Problem;
+  /**
+   * Present when a file must be added to a .gitignore first: the .gitignore, as a path, and the line
+   * to add to it. haau3 never edits a .gitignore itself. Added in format 1.2.
+   */
+  gitignore?: { file: string; line: string };
 }
 
 /** Every command prints one of these. Each field is always present; data or error is null. */

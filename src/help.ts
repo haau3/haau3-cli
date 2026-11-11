@@ -24,6 +24,14 @@ export const HELP: Help = {
     { name: "login --complete", description: "Wait for that approval, then finish signing in." },
     { name: "whoami", description: "Who is signed in, the organization, its plan and this month's use." },
     { name: "logout", description: "Sign out, and end the approval." },
+    {
+      name: "keys create",
+      description: "Make a live API key for the signed-in organization and write it to the project's env file as HAAU3_API_KEY. The key is never shown.",
+    },
+    { name: "keys create --test", description: "Make a test key instead, which reaches the Sandbox only." },
+    { name: "keys create --name <name>", description: "Name the key. By default the name says haau3 made it, for which folder and on which day." },
+    { name: "keys create --env-file <file>", description: "Write to this env file. By default the one that holds the key, else .env.local, else .env." },
+    { name: "keys create --replace", description: "Replace a key the file already holds. The old key is not revoked." },
   ],
   options: [
     { name: "--json", description: "Print one JSON document. Automatic when output is not a terminal." },
