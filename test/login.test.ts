@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { COMPLETE_WAIT_MS } from "../src/commands/login.js";
+import { POLL_TIMEOUT_MS } from "../src/signin/device.js";
 import { keyringName } from "../src/session/keyring.js";
 import { VERSION } from "../src/version.js";
 import { ACCESS_TOKEN, DEVICE_CODE, FakeServer, REFRESH_TOKEN, USER_CODE, WHOAMI } from "./fake-server.js";
@@ -65,6 +66,8 @@ describe("login with no terminal, as an agent runs it", () => {
       verificationUri: `${server.url}/device`,
       userCode: USER_CODE,
       expiresAt: new Date(clock.now() + 600_000).toISOString(),
+      platform: server.url,
+      signInService: server.issuer,
       next: [{ command: "npx haau3 login --complete", description: expect.stringContaining("run it again") }],
     });
     // Never the page with the code filled in (RFC 8628, section 5.4).
@@ -110,6 +113,7 @@ describe("login with no terminal, as an agent runs it", () => {
       status: "signed-in",
       member: WHOAMI.member,
       organization: WHOAMI.organization,
+      platform: server.url,
       session: { expiresAt: expect.any(String), store: "keyring", storeName: keyringName(), storePath: null },
       next: [{ command: "npx haau3 whoami", description: expect.any(String) }],
     });
@@ -131,7 +135,9 @@ describe("login with no terminal, as an agent runs it", () => {
     const platformEnd = clock.now() + 30 * 60_000;
     server.whoamiExpiresAt = new Date(platformEnd).toISOString();
     const sooner = json((await signIn()).stdout);
-    expect(Date.parse(sooner.data.session.expiresAt)).toBe(platformEnd);
+    // Read on this computer's clock through the answer's Date header, which has whole seconds and the
+    // real time, while the test's clock has moved on five seconds of polling.
+    expect(Math.abs(Date.parse(sooner.data.session.expiresAt) - platformEnd)).toBeLessThan(7_000);
 
     // A platform answering later than an hour from approval is held to the hour.
     await cli(["logout"]);
@@ -152,8 +158,9 @@ describe("login with no terminal, as an agent runs it", () => {
     expect(error.message).toContain(`${server.url}/device`);
     expect(error.message).toContain(USER_CODE);
     expect(error.next[0].command).toBe("npx haau3 login --complete");
-    expect(clock.slept.reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(COMPLETE_WAIT_MS);
-    expect(clock.slept.length).toBeGreaterThanOrEqual(19);
+    // The waits, the last poll's own limit and what follows an approval all fit inside the run's limit.
+    expect(clock.slept.reduce((a, b) => a + b, 0) + POLL_TIMEOUT_MS + 20_000).toBeLessThanOrEqual(COMPLETE_WAIT_MS);
+    expect(clock.slept.length).toBeGreaterThanOrEqual(12);
     expect(stored().pending.deviceCode).toBe(DEVICE_CODE);
   });
 
@@ -327,7 +334,7 @@ describe("login at a terminal, as a person runs it", () => {
   const person = (io: Extra = {}): Run => ({ tty: true, io: { stdin: { isTTY: true }, ...io } });
 
   it("shows the page and the code, waits, and says who is signed in and where it is kept", async () => {
-    const out = await cli(["login"], person({ openBrowser: () => true, enter: () => ({ pressed: new Promise(() => {}), stop() {} }) }));
+    const out = await cli(["login"], person({ openBrowser: async () => true, enter: () => ({ pressed: new Promise(() => {}), stop() {} }) }));
     expect(out.code).toBe(0);
     expect(out.stdout).toContain("To sign in, open this page and enter the code.");
     expect(out.stdout).toContain(`  Page: ${server.url}/device\n  Code: ${USER_CODE}\n  The code expires at `);
@@ -342,7 +349,7 @@ describe("login at a terminal, as a person runs it", () => {
   it("opens the plain page, never the one with the code, when Enter is pressed", async () => {
     const opened: string[] = [];
     let stopped = false;
-    await cli(["login"], person({ openBrowser: (url) => (opened.push(url), true), enter: () => ({ pressed: Promise.resolve(), stop: () => (stopped = true) }) }));
+    await cli(["login"], person({ openBrowser: async (url) => (opened.push(url), true), enter: () => ({ pressed: Promise.resolve(), stop: () => (stopped = true) }) }));
     expect(opened).toEqual([`${server.url}/device`]);
     expect(stopped).toBe(true);
   });
@@ -465,7 +472,7 @@ describe("logout", () => {
     await signIn();
     const out = await cli(["logout"]);
     expect(out.code).toBe(0);
-    expect(json(out.stdout).data).toEqual({ status: "signed-out", revoked: true, pendingCleared: false });
+    expect(json(out.stdout).data).toEqual({ status: "signed-out", revoked: true, pendingCleared: false, copyLeft: false });
     expect(keyring.entries.has(server.url)).toBe(false);
     const [revocation] = server.to("/issuer/revoke");
     expect(Object.fromEntries(new URLSearchParams(revocation!.body))).toEqual({ token: ACCESS_TOKEN, token_type_hint: "access_token", client_id: "client_fake" });
@@ -498,7 +505,7 @@ describe("logout", () => {
   it("is fine with nothing to sign out of", async () => {
     const out = await cli(["logout"]);
     expect(out.code).toBe(0);
-    expect(json(out.stdout).data).toEqual({ status: "already-signed-out", revoked: false, pendingCleared: false });
+    expect(json(out.stdout).data).toEqual({ status: "already-signed-out", revoked: false, pendingCleared: false, copyLeft: false });
     expect(server.requests).toEqual([]);
   });
 

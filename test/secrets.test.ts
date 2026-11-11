@@ -138,7 +138,7 @@ describe("no command prints a planted secret", () => {
             Object.assign(server, { tokenAnswers: scenario.tokens, whoamiAnswer: "ok", revokeStatus: 200 });
             const store = testStore(dir, keyring);
             const env = { HAAU3_API_KEY: IN_ENVIRONMENT, HAAU3_OUTPUT: output, HAAU3_PLATFORM_URL: server.url };
-            const io = { store, ...fakeClock(), ...(person ? { stdin: { isTTY: true }, openBrowser: () => true, enter: () => ({ pressed: Promise.resolve(), stop() {} }) } : {}) };
+            const io = { store, ...fakeClock(), ...(person ? { stdin: { isTTY: true }, openBrowser: async () => true, enter: () => ({ pressed: Promise.resolve(), stop() {} }) } : {}) };
             const run = async (args: string[]) => {
               const out = await runCli(args, { tty: person, env, cwd: project, io });
               assertClean(out.stdout, `stdout of ${args.join(" ")}`);

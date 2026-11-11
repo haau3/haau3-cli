@@ -61,9 +61,9 @@ const document = parse(unknown.stdout);
 expect(unknown.status === 2, `an unknown command exited ${unknown.status}`);
 expect(document?.formatVersion === "1.1" && document?.error?.code === "unknown-command", `an unknown command printed ${JSON.stringify(unknown.stdout.slice(0, 120))}`);
 
-// whoami looks in the system's credential store, so this loads the installed one's native package, as
-// npx would; a session file in a folder of its own, so nobody's own session is read.
-const whoami = haau3(["whoami"], { HAAU3_CONFIG_DIR: join(work, "config") });
+// whoami from the install, kept away from the credential store and pointed at an address nobody
+// serves, so a contributor's own session is neither read nor sent anywhere.
+const whoami = haau3(["whoami"], { HAAU3_SESSION_STORE: "file", HAAU3_CONFIG_DIR: join(work, "config"), HAAU3_PLATFORM_URL: "http://127.0.0.1:9" });
 const signedOut = parse(whoami.stdout);
 expect(whoami.status === 1 && signedOut?.error?.code === "not-signed-in", `whoami printed ${JSON.stringify(whoami.stdout.slice(0, 160))}, exit ${whoami.status}`);
 

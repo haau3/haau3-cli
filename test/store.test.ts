@@ -2,7 +2,7 @@
 // choice between the credential store and the file, and, with HAAU3_TEST_OS_STORE=1 (CI sets it on
 // every system), the operating system's own credential store for real.
 import { randomBytes } from "node:crypto";
-import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { inspect } from "node:util";
@@ -195,6 +195,84 @@ describe("the store", () => {
     writeFileSync(join(dir, "not-a-folder"), "");
     const store = sessionStore({ env: { HAAU3_CONFIG_DIR: join(dir, "not-a-folder") }, keyring: unreachableKeyring() });
     expect(await store.save(ADDRESS, record())).toBeNull();
+  });
+});
+
+describe("a file or folder someone else could have written", () => {
+  const posix = process.platform !== "win32";
+
+  it("is ignored when HAAU3_CONFIG_DIR is relative, as a relative XDG_CONFIG_HOME is", () => {
+    expect(configDir({ HAAU3_CONFIG_DIR: ".haau3" }, "linux", join("/", "home", "someone"))).toBe(join("/", "home", "someone", ".config", "haau3"));
+  });
+
+  it.runIf(posix)("is not read when others can read or write it, or when it is a symlink", () => {
+    const file = new FileStore(dir);
+    file.write(ADDRESS, toStored(record()));
+    expect(file.read(ADDRESS)).not.toBeNull();
+    chmodSync(file.path, 0o644);
+    expect(file.read(ADDRESS)).toBeNull();
+    chmodSync(file.path, 0o600);
+    const elsewhere = join(dir, "elsewhere.json");
+    renameSync(file.path, elsewhere);
+    symlinkSync(elsewhere, file.path);
+    expect(file.read(ADDRESS)).toBeNull();
+  });
+
+  it.runIf(posix)("is neither read nor written in a folder others can write", () => {
+    const file = new FileStore(dir);
+    file.write(ADDRESS, toStored(record()));
+    chmodSync(dir, 0o777);
+    try {
+      expect(file.read(ADDRESS)).toBeNull();
+      expect(() => file.write(ADDRESS, toStored(record()))).toThrow();
+    } finally {
+      chmodSync(dir, 0o700);
+    }
+  });
+
+  it("is read back with the checks it passed when it was made", () => {
+    const planted = toStored(record()) as any;
+    planted.pending.verificationUri = "http://evil.example/activate";
+    expect(fromStored(planted, ADDRESS).pending).toBeUndefined();
+    const filledIn = toStored(record()) as any;
+    filledIn.pending.verificationUri = "https://auth.example.com/device?user_code=WDJB-MJHT";
+    expect(fromStored(filledIn, ADDRESS).pending).toBeUndefined();
+    const offOrigin = toStored(record()) as any;
+    offOrigin.pending.service.tokenEndpoint = "https://evil.example/token";
+    expect(fromStored(offOrigin, ADDRESS).pending).toBeUndefined();
+    const notACode = toStored(record()) as any;
+    notACode.pending.userCode = "click here";
+    expect(fromStored(notACode, ADDRESS).pending).toBeUndefined();
+    const plainHttp = toStored(record()) as any;
+    plainHttp.session.issuer = "http://auth.example.com";
+    expect(fromStored(plainHttp, ADDRESS).session).toBeUndefined();
+  });
+
+  it("sweeps a temporary file a killed run left, which holds a session too", () => {
+    const file = new FileStore(dir);
+    const stale = join(dir, ".session.json.abc123.tmp");
+    writeFileSync(stale, "{}", { mode: 0o600 });
+    utimesSync(stale, new Date(Date.now() - 120_000), new Date(Date.now() - 120_000));
+    file.write(ADDRESS, toStored(record()));
+    expect(readdirSync(dir)).toEqual(["session.json"]);
+  });
+});
+
+describe("the credential store's bound", () => {
+  it("kills a call that outlives it, and treats the store as out of reach for the rest of the run", async () => {
+    // Killed a millisecond in, before it can reach any store.
+    const keyring = osKeyring(`haau3-cli-test-${randomBytes(4).toString("hex")}`, 1);
+    const started = Date.now();
+    await expect(keyring.read(ADDRESS)).rejects.toThrow("did not answer in time");
+    await expect(keyring.read(ADDRESS)).rejects.toThrow("earlier in this run");
+    expect(Date.now() - started).toBeLessThan(5_000);
+  });
+
+  it("sends a record too big for every store to the file instead", async () => {
+    const keyring = osKeyring(`haau3-cli-test-${randomBytes(4).toString("hex")}`, 1);
+    const big = toStored(record()) as any;
+    big.session.organization.name = "x".repeat(3000);
+    await expect(keyring.write(ADDRESS, big)).rejects.toThrow("Too big");
   });
 });
 

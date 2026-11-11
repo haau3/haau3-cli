@@ -14,7 +14,17 @@ export const DEVICE_CODE = `${CORE}devicecode`;
 export const USER_CODE = "WDJB-MJHT";
 export const SIGN_IN_MARKERS = [ACCESS_TOKEN, REFRESH_TOKEN, DEVICE_CODE, CORE];
 
-export type TokenAnswer = "pending" | "slow_down" | "expired" | "denied" | "approved" | "invalid_grant" | "server-error" | "not-bearer";
+export type TokenAnswer =
+  | "pending"
+  | "slow_down"
+  | "expired"
+  | "denied"
+  | "approved"
+  | "invalid_grant"
+  | "server-error"
+  | "not-bearer"
+  | "rate-limited"
+  | "pending-as-200";
 export type WhoamiAnswer = "ok" | "unauthorized" | "not-a-member" | "no-organization" | "unavailable" | "garbled";
 
 export interface Recorded {
@@ -50,12 +60,22 @@ export class FakeServer {
   revokeStatus = 200;
   interval: number | undefined = 5;
   expiresIn = 600;
+  /** The scopes the platform's metadata lists. */
+  scopes = ["user:org:read"];
+  /** The organization's name whoami gives, to try what a name someone chose can hold. */
+  organizationName = WHOAMI.organization.name;
+  /** How many token requests were answered, the spent code's included. */
+  get polls(): number {
+    return this.#polls;
+  }
 
   #server: Server | undefined;
   #polls = 0;
   #issuedAt = 0;
   /** Whether the grant behind the token is live: from an approval until a revocation. */
   #live = false;
+  /** A device code is exchanged once (RFC 8628, section 3.4); after that it is invalid_grant. */
+  #spent = false;
 
   get issuer(): string {
     return `${this.url}/issuer`;
@@ -99,7 +119,7 @@ export class FakeServer {
         return json(200, {
           resource: this.platformMetadata === "other-resource" ? `${this.url}/api/other` : `${this.url}/api/cli/v1`,
           authorization_servers: [this.issuer],
-          scopes_supported: ["user:org:read"],
+          scopes_supported: this.scopes,
           bearer_methods_supported: ["header"],
           resource_name: "haau3 command line",
           ...(this.platformMetadata === "no-client-id" ? {} : { haau3_client_id: "client_fake" }),
@@ -119,6 +139,7 @@ export class FakeServer {
       case "/issuer/device": {
         if (this.deviceAnswer === "invalid_client") return json(401, { error: "invalid_client" });
         this.#polls = 0;
+        this.#spent = false;
         return json(200, {
           device_code: DEVICE_CODE,
           user_code: this.deviceAnswer === "bad-code" ? "no\ncontrol" : USER_CODE,
@@ -132,11 +153,22 @@ export class FakeServer {
         if (form.get("device_code") !== DEVICE_CODE || form.get("grant_type") !== "urn:ietf:params:oauth:grant-type:device_code") {
           return json(400, { error: "invalid_grant" });
         }
+        if (this.#spent) {
+          this.#polls++;
+          return json(400, { error: "invalid_grant" });
+        }
         const answer = this.tokenAnswers[Math.min(this.#polls++, this.tokenAnswers.length - 1)]!;
         if (answer === "server-error") return json(502, {});
+        if (answer === "rate-limited") {
+          res.writeHead(429, { "Retry-After": "30" });
+          res.end();
+          return;
+        }
+        if (answer === "pending-as-200") return json(200, { error: "authorization_pending" });
         if (answer === "approved" || answer === "not-bearer") {
           this.#issuedAt = Date.now();
           this.#live = true;
+          this.#spent = true;
           return json(200, {
             access_token: ACCESS_TOKEN,
             refresh_token: REFRESH_TOKEN,
@@ -163,7 +195,8 @@ export class FakeServer {
         if (this.whoamiAnswer === "unavailable") return problem(503, "unavailable", { "Retry-After": "30" });
         if (this.whoamiAnswer === "garbled") return json(200, { member: "nobody" });
         const expiresAt = this.whoamiExpiresAt ?? new Date((this.#issuedAt || Date.now()) + 3_600_000).toISOString();
-        return json(200, { ...WHOAMI, session: { expiresAt } }, { "Cache-Control": "no-store" });
+        const organization = { ...WHOAMI.organization, name: this.organizationName };
+        return json(200, { ...WHOAMI, organization, session: { expiresAt } }, { "Cache-Control": "no-store" });
       }
       default:
         return problem(404, "not-found");

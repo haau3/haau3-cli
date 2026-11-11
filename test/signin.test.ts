@@ -1,7 +1,10 @@
 // The pieces of signing in on their own: where the metadata lives (RFC 9728, RFC 8414), what is read
 // from a refusal, and how the platform's description of a session is checked.
 import { describe, expect, it } from "vitest";
+import { when } from "../src/commands/context.js";
+import { page } from "../src/signin/device.js";
 import { authorizationServerMetadataURL, resourceMetadataURL, resourceOf } from "../src/signin/discovery.js";
+import { openBrowser, opener } from "../src/terminal.js";
 import { problemOf, retryAfterSeconds, text } from "../src/signin/http.js";
 import { parseWhoami } from "../src/signin/whoami.js";
 import { WHOAMI } from "./fake-server.js";
@@ -70,6 +73,53 @@ describe("the platform's description of a session", () => {
     expect(parseWhoami({ ...body, usage: { count: -1, allowance: 1000, headline: "x" } })).toBeUndefined();
     expect(parseWhoami({ ...body, usage: { count: 1, allowance: 0, headline: "x" } })).toBeUndefined();
     expect(parseWhoami({ ...body, member: { id: "user_1" } })).toBeUndefined();
-    expect(parseWhoami({ ...body, role: "a\nrole" })).toBeUndefined();
+    expect(parseWhoami({ ...body, member: { id: "user\n1", email: null } })).toBeUndefined();
+  });
+
+  it("shows a name with anything that could steer a terminal replaced, emoji joiners kept", () => {
+    const name = "Acme\u009b31m\u202e Labs\u2028 \u{1F468}\u200d\u{1F4BB}";
+    const read = parseWhoami({ ...body, organization: { id: "org_1", name, slug: null }, role: "a\nrole" });
+    expect(read?.organization.name).toBe("Acme\ufffd31m\ufffd Labs\ufffd \u{1F468}\u200d\u{1F4BB}");
+    expect(read?.role).toBe("a\ufffdrole");
+  });
+});
+
+describe("the page a person opens", () => {
+  it("is https with no query or fragment, as the parser reads it", () => {
+    expect(page("https://auth.example.com/device", "https://platform.haau3.com")).toBe("https://auth.example.com/device");
+    expect(page("https://AUTH.example.com/a/../device", "https://platform.haau3.com")).toBe("https://auth.example.com/device");
+    expect(page("https://auth.example.com/device?user_code=WDJB-MJHT", "https://platform.haau3.com")).toBeUndefined();
+    expect(page("https://auth.example.com/device#WDJB-MJHT", "https://platform.haau3.com")).toBeUndefined();
+    expect(page("https://someone@auth.example.com/device", "https://platform.haau3.com")).toBeUndefined();
+  });
+
+  it("is http only on this computer, and only when the platform is too", () => {
+    expect(page("http://127.0.0.1:3000/device", "http://127.0.0.1:3002")).toBe("http://127.0.0.1:3000/device");
+    expect(page("http://127.0.0.1:3000/device", "https://platform.haau3.com")).toBeUndefined();
+    expect(page("http://auth.example.com/device", "http://127.0.0.1:3002")).toBeUndefined();
+  });
+});
+
+describe("the system's opener", () => {
+  it("is named by its full path where it has a fixed one, so no project's file of that name runs", () => {
+    expect(opener("darwin", {})).toEqual(["/usr/bin/open", []]);
+    expect(opener("win32", { SystemRoot: "D:\\Windows" })).toEqual(["D:\\Windows\\System32\\rundll32.exe", ["url.dll,FileProtocolHandler"]]);
+    expect(opener("win32", {})[0]).toBe("C:\\Windows\\System32\\rundll32.exe");
+    expect(opener("linux", {})).toEqual(["xdg-open", []]);
+  });
+
+  it("says when it could not start", async () => {
+    expect(await openBrowser("https://auth.example.com/device", "linux", { PATH: "/nonexistent" })).toBe(false);
+    expect(await openBrowser("ftp://auth.example.com/", "darwin", {})).toBe(false);
+  });
+});
+
+describe("a time to a person", () => {
+  it("says how long until it, and only the clock once it has passed", () => {
+    const now = Date.parse("2026-11-11T18:00:00Z");
+    expect(when(now + 41 * 60_000, now)).toMatch(/, in 41 minutes$/);
+    expect(when(now + 60_000, now)).toMatch(/, in 1 minute$/);
+    expect(when(now + 10_000, now)).toMatch(/, in less than a minute$/);
+    expect(when(now - 60_000, now)).not.toContain(" in ");
   });
 });
