@@ -1,0 +1,97 @@
+name: Release
+
+# npm's trusted publisher for haau3 names this file and the `npm` environment, so neither is renamed.
+# On every push to main, release-please (as haau3-bot) keeps one release PR open with the next
+# version and its changelog, read from the titles of the squash-merged PRs (CONTRIBUTING.md).
+# Merging that PR makes the GitHub Release and its tag, and this same run stages the version on npm
+# with provenance. It is published once a maintainer approves it on npm. No npm token exists
+# anywhere: npm trusts this workflow through GitHub's OIDC token.
+#
+# Staging runs here rather than on the tag because a workflow run never starts another from a tag it
+# made with its own token, and npm's trusted publisher matches the file and the environment, not
+# the ref.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Release PR and GitHub Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - name: Mint haau3-bot's token
+        id: token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.HAAU3_BOT_CLIENT_ID }}
+          private-key: ${{ secrets.HAAU3_BOT_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+          # release-please labels its PRs, and labels belong to issues.
+          permission-issues: write
+      - name: release-please
+        id: release
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          token: ${{ steps.token.outputs.token }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+      # The PR arrives as JSON text and is read in the script: GitHub evaluates a step's env before
+      # its `if`, so fromJSON on the empty output of a run that opened no PR fails the job.
+      - name: Request a review of the release PR
+        if: steps.release.outputs.pr && vars.HAAU3_BOT_REVIEWER
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          PR: ${{ steps.release.outputs.pr }}
+          REVIEWER: ${{ vars.HAAU3_BOT_REVIEWER }}
+        run: gh pr edit "$(jq -r .number <<< "$PR")" --repo "$GITHUB_REPOSITORY" --add-reviewer "$REVIEWER"
+
+  stage:
+    name: Stage the release on npm
+    needs: release
+    # Not cancelled rather than succeeded: release-please makes the release before it updates PRs,
+    # and a failure in that second pass must not leave a cut release unstaged
+    # (googleapis/release-please-action#1203).
+    if: ${{ !cancelled() && needs.release.outputs.release_created == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.release.outputs.tag_name }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      # Node 24's npm (11.19) can stage over OIDC, which needs npm 11.15 or newer; Node 22's cannot.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          cache: pnpm
+          registry-url: "https://registry.npmjs.org"
+      - run: pnpm install --frozen-lockfile
+      - name: The tag names package.json's version
+        env:
+          TAG: ${{ needs.release.outputs.tag_name }}
+        run: test "v$(node -p 'require("./package.json").version')" = "$TAG"
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+      - run: pnpm check:package
+      - run: pnpm check:bin
+      - name: Stage for approval
+        run: npm stage publish --access public
