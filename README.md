@@ -28,9 +28,9 @@ The document:
 
 ```json
 {
-  "formatVersion": "1.1",
+  "formatVersion": "1.2",
   "cli": "haau3",
-  "cliVersion": "0.1.0",
+  "cliVersion": "0.1.2",
   "command": null,
   "ok": false,
   "environment": null,
@@ -53,6 +53,9 @@ The document:
   answer is the failure, `error.problem` carries the API's own
   [problem](https://docs.haau3.com/errors): its `type`, `title`, `status`, `code` when it has one
   (since 1.1), and `requestId`.
+- When a file has to be added to a `.gitignore` before haau3 will write to it, `error.gitignore`
+  names the `.gitignore` (`file`) and the line to add to it (`line`), since 1.2. haau3 never edits a
+  `.gitignore` itself.
 
 Exit codes: `0`, it worked; `1`, it ran and something failed; `2`, it was used wrongly.
 

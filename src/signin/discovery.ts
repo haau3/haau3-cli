@@ -161,7 +161,7 @@ export function platformUnavailable(host: string, answer: HttpResult & { answere
   return { code: "platform-unavailable", message: `${host} could not answer just now. ${when}`, next: [], problem: problemOf(answer) };
 }
 
-function signInUnavailable(platformURL: string): CliError {
+export function signInUnavailable(platformURL: string): CliError {
   const host = new URL(platformURL).host;
   return {
     code: "sign-in-unavailable",

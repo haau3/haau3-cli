@@ -46,6 +46,22 @@ export function endSession(session: Session, timeoutMs: number = REVOKE_TIMEOUT_
   return revoke(session.accessToken, session.revocationEndpoint, session.clientId, timeoutMs);
 }
 
+/**
+ * Ends a session the platform no longer takes, or whose end has passed: its grant revoked, then its
+ * stored copy deleted, but only while the store still holds this session. The store is read again
+ * first, so a session another run kept meanwhile (a `login --complete` that finished while this one
+ * waited on the platform) stays, as does whatever another run did to a waiting sign-in.
+ */
+export async function endStoredSession(ctx: Context, address: string, session: Session): Promise<void> {
+  await endSession(session);
+  const latest = await ctx.store.load(address);
+  const stored = latest.record.session;
+  if (stored && stored.accessToken.reveal() !== session.accessToken.reveal()) return;
+  const other = latest.other?.record.session;
+  if (other && other.accessToken.reveal() !== session.accessToken.reveal()) return;
+  await ctx.store.save(address, latest.record.pending ? { pending: latest.record.pending } : {});
+}
+
 /** Whether two waiting sign-ins are the same one: the same device code. */
 export function sameCode(a: PendingSignIn | undefined, b: PendingSignIn | undefined): boolean {
   return Boolean(a && b && a.deviceCode.reveal() === b.deviceCode.reveal());

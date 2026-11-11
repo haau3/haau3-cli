@@ -4,6 +4,7 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { FORMAT_VERSION } from "../src/output.js";
 
 const root = resolve(import.meta.dirname, "..");
 const work = join(root, ".check-bin");
@@ -59,7 +60,7 @@ expect(help.status === 0 && help.stdout.includes("Usage: haau3"), `--help printe
 const unknown = haau3(["no-such-command"]);
 const document = parse(unknown.stdout);
 expect(unknown.status === 2, `an unknown command exited ${unknown.status}`);
-expect(document?.formatVersion === "1.1" && document?.error?.code === "unknown-command", `an unknown command printed ${JSON.stringify(unknown.stdout.slice(0, 120))}`);
+expect(document?.formatVersion === FORMAT_VERSION && document?.error?.code === "unknown-command", `an unknown command printed ${JSON.stringify(unknown.stdout.slice(0, 120))}`);
 
 // whoami from the install, kept away from the credential store and pointed at an address nobody
 // serves, so a contributor's own session is neither read nor sent anywhere.

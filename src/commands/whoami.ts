@@ -5,7 +5,7 @@ import { resolvePlatform } from "../environment.js";
 import { readWhoami } from "../signin/whoami.js";
 import { COMPLETE_STEP, done, failed, LOGIN_STEP, misused, storeData, storeSentence, when, type Context, type Result } from "./context.js";
 import { memberName, organizationError } from "./login.js";
-import { endOnThisClock, endSession, loadRecord } from "./session.js";
+import { endOnThisClock, endStoredSession, loadRecord } from "./session.js";
 
 export async function whoami(ctx: Context): Promise<Result> {
   const platform = resolvePlatform(ctx.env);
@@ -24,16 +24,14 @@ export async function whoami(ctx: Context): Promise<Result> {
   }
 
   if (session.expiresAt <= ctx.now()) {
-    await endSession(session);
-    await ctx.store.save(address, { pending: record.pending });
+    await endStoredSession(ctx, address, session);
     return failed("whoami", { code: "session-ended", message: `The session ended at ${when(session.expiresAt, ctx.now())}. Sign in again.`, next: [LOGIN_STEP] });
   }
 
   const who = await readWhoami(address, session.accessToken);
   if (who.kind === "error") return failed("whoami", who.error);
   if (who.kind !== "ok") {
-    await endSession(session);
-    await ctx.store.save(address, { pending: record.pending });
+    await endStoredSession(ctx, address, session);
     if (who.kind === "ended") {
       return failed("whoami", { code: "session-ended", message: "The session has ended. Sign in again.", next: [LOGIN_STEP], problem: who.problem });
     }
