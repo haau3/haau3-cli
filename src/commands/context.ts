@@ -15,7 +15,7 @@ export interface Context {
   /** Resolves when the person presses Enter; stop() stops listening. Absent where nobody can. */
   enter?: () => { pressed: Promise<void>; stop(): void };
   /** Opens a page in the browser. False when it could not. */
-  openBrowser?: (url: string) => boolean;
+  openBrowser?: (url: string) => Promise<boolean>;
 }
 
 export interface Result {
@@ -43,9 +43,10 @@ export function nextText(steps: NextStep[]): string {
   return `\nNext:\n${steps.map((step) => `  ${step.command}\n    ${step.description}`).join("\n")}\n`;
 }
 
-/** "14:32, in 41 minutes", in the computer's own time zone and clock style. */
+/** "14:32, in 41 minutes", in the computer's own time zone and clock style; just "14:32" when it has passed. */
 export function when(at: number, now: number): string {
   const clock = new Date(at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  if (at <= now) return clock;
   const minutes = Math.round((at - now) / 60_000);
   if (minutes <= 0) return `${clock}, in less than a minute`;
   return `${clock}, in ${minutes === 1 ? "1 minute" : `${minutes} minutes`}`;

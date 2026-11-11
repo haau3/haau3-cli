@@ -26,29 +26,38 @@ export function listenForEnter(stdin: NodeJS.ReadStream): { pressed: Promise<voi
 }
 
 /**
- * Opens an https page (or http on this computer) in the default browser, with the system's own
- * opener and no shell, so nothing in the address is read as a command. False when it could not start.
+ * The system's own opener, by its full path where it has a fixed one. Windows looks in the current
+ * folder before PATH, so a bare name could run a program a project ships under that name.
  */
-export function openBrowser(address: string, platform: NodeJS.Platform = process.platform): boolean {
+export function opener(platform: NodeJS.Platform, env: NodeJS.ProcessEnv): [string, string[]] {
+  if (platform === "darwin") return ["/usr/bin/open", []];
+  if (platform === "win32") return [`${env.SystemRoot ?? "C:\\Windows"}\\System32\\rundll32.exe`, ["url.dll,FileProtocolHandler"]];
+  return ["xdg-open", []];
+}
+
+/**
+ * Opens an https page (or http on this computer) in the default browser, with the system's opener and
+ * no shell, so nothing in the address is read as a command. False when the opener did not start.
+ */
+export function openBrowser(address: string, platform: NodeJS.Platform = process.platform, env: NodeJS.ProcessEnv = process.env): Promise<boolean> {
   let url: URL;
   try {
     url = new URL(address);
   } catch {
-    return false;
+    return Promise.resolve(false);
   }
-  if (!isSafeAddress(url) || url.username || url.password) return false;
-  const [command, args] =
-    platform === "darwin"
-      ? ["open", [url.href]]
-      : platform === "win32"
-        ? ["rundll32", ["url.dll,FileProtocolHandler", url.href]]
-        : ["xdg-open", [url.href]];
-  try {
-    const child = spawn(command, args, { stdio: "ignore", detached: true, shell: false });
-    child.on("error", () => {});
-    child.unref();
-    return true;
-  } catch {
-    return false;
-  }
+  if (!isSafeAddress(url) || url.username || url.password) return Promise.resolve(false);
+  const [command, args] = opener(platform, env);
+  return new Promise((resolve) => {
+    try {
+      const child = spawn(command, [...args, url.href], { stdio: "ignore", detached: true, shell: false, windowsHide: true, env });
+      child.once("spawn", () => {
+        child.unref();
+        resolve(true);
+      });
+      child.once("error", () => resolve(false));
+    } catch {
+      resolve(false);
+    }
+  });
 }

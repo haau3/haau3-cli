@@ -36,7 +36,7 @@ export interface Io {
   store?: SessionStore;
   /** Listens for Enter on stdin. Only used when a person is at a terminal. */
   enter?: () => { pressed: Promise<void>; stop(): void };
-  openBrowser?: (url: string) => boolean;
+  openBrowser?: (url: string) => Promise<boolean>;
 }
 
 const GLOBAL_OPTIONS = {
