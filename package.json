@@ -1,0 +1,56 @@
+{
+  "name": "haau3",
+  "version": "0.0.0",
+  "description": "The command line for the haau3 platform API, for developers and their coding agents. Readable text at a terminal, one versioned JSON document everywhere else.",
+  "license": "MIT",
+  "homepage": "https://docs.haau3.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/haau3/haau3-cli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/haau3/haau3-cli/issues"
+  },
+  "keywords": [
+    "haau3",
+    "cli",
+    "command-line",
+    "fhir",
+    "fhir-r4",
+    "healthcare",
+    "healthcare-api",
+    "agents"
+  ],
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "haau3": "dist/cli.mjs"
+  },
+  "files": [
+    "dist"
+  ],
+  "packageManager": "pnpm@12.12.1",
+  "scripts": {
+    "build": "tsdown",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "lint": "eslint .",
+    "check:package": "publint --strict",
+    "check:bin": "tsx scripts/check-bin.ts",
+    "check:public-text": "tsx scripts/check-public-text.ts"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^22.20.5",
+    "eslint": "^10.14.0",
+    "publint": "^0.3.25",
+    "tsdown": "0.23.7",
+    "tsx": "^4.23.15",
+    "typescript": "6.0.3",
+    "typescript-eslint": "^8.72.1",
+    "vitest": "^5.1.0",
+    "yaml": "^2.9.1"
+  }
+}

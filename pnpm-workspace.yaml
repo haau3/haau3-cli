@@ -1,0 +1,14 @@
+# Supply-chain settings. pnpm installs no version, direct or transitive, until it has been published
+# for three days; the setting is in minutes. A security fix inside the window is listed under
+# minimumReleaseAgeExclude by name and version, never a bare name, and removed once it is three days
+# old.
+minimumReleaseAge: 4320
+
+# Keeps pnpm-lock.yaml one YAML document, which GitHub's dependency graph needs to see the tree
+# (dependabot/dependabot-core#15904).
+pmOnFail: ignore
+
+# esbuild is the one dependency here that runs an install script (it fetches its platform binary);
+# pnpm blocks every other.
+allowBuilds:
+  esbuild: true
