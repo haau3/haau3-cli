@@ -1,18 +1,18 @@
 // The document every command prints, and when it is printed instead of text.
 import { describe, expect, it } from "vitest";
-import { askedFormat, chooseFormat, CODEX_MARKERS, EXIT, failure, FORMAT_VERSION, render, success } from "../src/output.js";
+import { AGENT_MARKERS, agentDetected, askedFormat, chooseFormat, CODEX_MARKERS, EXIT, failure, FORMAT_VERSION, render, success } from "../src/output.js";
 import { VERSION } from "../src/version.js";
 
 describe("the document", () => {
-  it("is version 1.0 of its shape", () => {
-    expect(FORMAT_VERSION).toBe("1.0");
+  it("is version 1.1 of its shape", () => {
+    expect(FORMAT_VERSION).toBe("1.1");
   });
 
   it("carries every field, in one order, on success", () => {
     const document = success("version", { version: VERSION }, "sandbox");
     expect(Object.keys(document)).toEqual(["formatVersion", "cli", "cliVersion", "command", "ok", "environment", "data", "error"]);
     expect(document).toEqual({
-      formatVersion: "1.0",
+      formatVersion: "1.1",
       cli: "haau3",
       cliVersion: VERSION,
       command: "version",
@@ -28,7 +28,7 @@ describe("the document", () => {
       code: "api-refused",
       message: "The API refused the key.",
       next: [{ command: "npx haau3 --help", description: "See what haau3 can do." }],
-      problem: { type: "https://docs.haau3.com/errors#invalid-key", title: "Invalid key", status: 401, requestId: "req_1" },
+      problem: { type: "https://docs.haau3.com/errors#invalid-key", title: "Invalid key", status: 401, code: "invalid-key", requestId: "req_1" },
     };
     const document = failure("doctor", error, "production");
     expect(Object.keys(document)).toEqual(["formatVersion", "cli", "cliVersion", "command", "ok", "environment", "data", "error"]);
@@ -78,6 +78,19 @@ describe("the format", () => {
 
   it("reads Codex's four markers", () => {
     expect([...CODEX_MARKERS]).toEqual(["CODEX_SANDBOX", "CODEX_THREAD_ID", "CODEX_SANDBOX_NETWORK_DISABLED", "CODEX_CI"]);
+  });
+
+  it.each(AGENT_MARKERS)("is JSON at a terminal when an agent's %s is set", (marker) => {
+    expect(chooseFormat(false, true, { [marker]: "1" })).toBe("json");
+    expect(agentDetected({ [marker]: "1" })).toBe(true);
+    expect(agentDetected({ [marker]: " " })).toBe(false);
+  });
+
+  it("reads every agent's marker, Codex's among them, and not the bare AGENT", () => {
+    expect(AGENT_MARKERS).toEqual(expect.arrayContaining([...CODEX_MARKERS, "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CURSOR_AGENT", "GEMINI_CLI", "AI_AGENT"]));
+    expect(AGENT_MARKERS).toHaveLength(18);
+    expect(agentDetected({ AGENT: "1" })).toBe(false);
+    expect(chooseFormat(false, true, { AGENT: "1" })).toBe("text");
   });
 
   it("counts only --json and HAAU3_OUTPUT as asked for", () => {

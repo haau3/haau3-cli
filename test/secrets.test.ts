@@ -1,14 +1,19 @@
-// An API key is never printed. Made-up keys are planted where the command line looks (the environment
-// and both env files) beside another secret it must never read out, then every command runs, in this
-// process and as a real process, and nothing it prints may hold any of them. A new command joins
-// COMMANDS the day it is added. The controls prove the check catches a leak and the keys are planted.
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+// No secret is ever printed: not an API key, an access token, a refresh token or a device code.
+// Made-up keys are planted where the command line looks (the environment and both env files) beside
+// another secret it must never read out, and a stand-in sign-in service hands out planted tokens and a
+// planted device code. Then every command runs, in this process and as a real process, at a terminal
+// and not, as text and as JSON, through every answer, and nothing it prints may hold any of them. A
+// new command joins the day it is added. The refresh token is never kept or sent anywhere either. The
+// controls prove the check catches a leak and that each secret really is planted.
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { format, inspect } from "node:util";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { findKey } from "../src/key.js";
-import { runCli, spawnCli } from "./helpers.js";
+import { AccessToken, DeviceCode } from "../src/signin/secret.js";
+import { ACCESS_TOKEN, DEVICE_CODE, FakeServer, REFRESH_TOKEN, SIGN_IN_MARKERS, type TokenAnswer, type WhoamiAnswer } from "./fake-server.js";
+import { fakeClock, memoryKeyring, runCli, spawnCli, spawnCliAsync, testStore, unreachableKeyring } from "./helpers.js";
 
 // Built from parts, so no file in this repository holds a whole key-shaped string.
 const CORE = ["PLANTED", "KEY", "7f3a9c"].join("");
@@ -16,7 +21,7 @@ const IN_ENVIRONMENT = ["haau3", "sk", "live", `${CORE}env`].join("_");
 const IN_ENV_LOCAL = ["haau3", "sk", "test", `${CORE}local`].join("_");
 const IN_ENV = ["haau3", "sk", "live", `${CORE}dotenv`].join("_");
 const NEIGHBOUR = ["PLANTED", "NEIGHBOUR", "e41b07"].join("");
-const PLANTED = [IN_ENVIRONMENT, IN_ENV_LOCAL, IN_ENV, CORE, NEIGHBOUR];
+const PLANTED = [IN_ENVIRONMENT, IN_ENV_LOCAL, IN_ENV, CORE, NEIGHBOUR, ...SIGN_IN_MARKERS];
 
 /** Throws, without repeating it, when `text` holds anything planted. */
 function assertClean(text: string, where: string): void {
@@ -25,8 +30,8 @@ function assertClean(text: string, where: string): void {
 }
 
 /**
- * Every argument list 0.1 accepts or refuses, and the planted key typed where a command or a flag
- * would be. Each has a label, so no test's name holds a key-shaped string.
+ * Every argument list the command line accepts or refuses, and the planted key typed where a command,
+ * a flag or an argument would be. Each has a label, so no test's name holds a key-shaped string.
  */
 const COMMANDS: [string, string[]][] = [
   ["no arguments", []],
@@ -40,12 +45,19 @@ const COMMANDS: [string, string[]][] = [
   ["an unknown command", ["no-such-command"]],
   ["an unknown flag", ["--no-such-flag"]],
   ["a value for --json", ["--json=1"]],
+  ["login", ["login"]],
+  ["login --complete", ["login", "--complete"]],
+  ["whoami", ["whoami"]],
+  ["logout", ["logout"]],
   ["the key as a command", [IN_ENVIRONMENT]],
   ["the key as a flag", [`--${IN_ENVIRONMENT}`]],
   ["the key as --json's value", [`--json=${IN_ENVIRONMENT}`]],
   ["the key as an unknown flag's value", [`--key=${IN_ENVIRONMENT}`]],
   ["the key after help", ["help", IN_ENVIRONMENT]],
   ["the key after --", ["--", IN_ENVIRONMENT]],
+  ["the key after login", ["login", IN_ENVIRONMENT]],
+  ["the key as --complete's value", ["login", `--complete=${IN_ENVIRONMENT}`]],
+  ["the key after whoami", ["whoami", IN_ENVIRONMENT]],
 ];
 
 let project: string;
@@ -56,11 +68,23 @@ beforeAll(() => {
 });
 afterAll(() => rmSync(project, { recursive: true, force: true }));
 
+let server: FakeServer;
+let dir: string;
+beforeEach(async () => {
+  server = await new FakeServer().start();
+  dir = mkdtempSync(join(tmpdir(), "cli-secrets-store-"));
+});
+afterEach(async () => {
+  await server.stop();
+  rmSync(dir, { recursive: true, force: true });
+});
+
 describe("the controls", () => {
   it("catch a planted secret, and whatever util.inspect shows of one", () => {
     expect(() => assertClean(`using ${IN_ENV_LOCAL}`, "a leaky line")).toThrow("a leaky line shows planted secret number 1");
     expect(() => assertClean(inspect({ token: NEIGHBOUR }), "an inspected object")).toThrow();
     expect(() => assertClean(`prefix ${CORE}... truncated`, "a truncated key")).toThrow();
+    for (const marker of [ACCESS_TOKEN, REFRESH_TOKEN, DEVICE_CODE]) expect(() => assertClean(`Bearer ${marker}`, "a token")).toThrow();
     expect(() => assertClean("nothing here", "a clean line")).not.toThrow();
   });
 
@@ -68,15 +92,37 @@ describe("the controls", () => {
     expect(findKey({ cwd: project, env: { HAAU3_API_KEY: IN_ENVIRONMENT } }).key?.reveal()).toBe(IN_ENVIRONMENT);
     expect(findKey({ cwd: project, env: {} }).key?.reveal()).toBe(IN_ENV_LOCAL);
   });
+
+  it("are handed out by the stand-in sign-in service, and kept: the access token and the device code", async () => {
+    const keyring = memoryKeyring();
+    const run = (args: string[]) => runCli(args, { env: { HAAU3_PLATFORM_URL: server.url }, io: { store: testStore(dir, keyring), ...fakeClock() } });
+    await run(["login"]);
+    expect(keyring.entries.get(server.url)).toContain(DEVICE_CODE);
+    await run(["login", "--complete"]);
+    expect(keyring.entries.get(server.url)).toContain(ACCESS_TOKEN);
+    expect(server.requests.some((r) => r.headers.authorization === `Bearer ${ACCESS_TOKEN}`)).toBe(true);
+  });
 });
+
+/** What the stand-in answers, scenario by scenario: each run of a command sees one of these. */
+const SCENARIOS: { label: string; tokens: TokenAnswer[]; whoami: WhoamiAnswer; revokeStatus: number }[] = [
+  { label: "approved", tokens: ["approved"], whoami: "ok", revokeStatus: 200 },
+  { label: "slowed then approved", tokens: ["slow_down", "pending", "approved"], whoami: "ok", revokeStatus: 200 },
+  { label: "still pending", tokens: ["pending"], whoami: "ok", revokeStatus: 200 },
+  { label: "denied", tokens: ["denied"], whoami: "ok", revokeStatus: 200 },
+  { label: "refused by the sign-in service", tokens: ["invalid_grant"], whoami: "ok", revokeStatus: 200 },
+  { label: "refused by the platform", tokens: ["approved"], whoami: "unauthorized", revokeStatus: 200 },
+  { label: "not a member", tokens: ["approved"], whoami: "not-a-member", revokeStatus: 200 },
+  { label: "the platform down", tokens: ["approved"], whoami: "unavailable", revokeStatus: 503 },
+];
 
 describe("no command prints a planted secret", () => {
   for (const [label, args] of COMMANDS) {
     it(`${label}, at a terminal and not, as text and as JSON`, async () => {
       for (const tty of [true, false]) {
         for (const output of ["", "json", "text"]) {
-          const env = { HAAU3_API_KEY: IN_ENVIRONMENT, NEIGHBOUR_TOKEN: NEIGHBOUR, HAAU3_OUTPUT: output };
-          const out = await runCli(args, { tty, env, cwd: project });
+          const env = { HAAU3_API_KEY: IN_ENVIRONMENT, NEIGHBOUR_TOKEN: NEIGHBOUR, HAAU3_OUTPUT: output, HAAU3_PLATFORM_URL: server.url };
+          const out = await runCli(args, { tty, env, cwd: project, io: { store: testStore(dir, memoryKeyring()), ...fakeClock() } });
           assertClean(out.stdout, "stdout");
           assertClean(out.stderr, "stderr");
         }
@@ -84,8 +130,42 @@ describe("no command prints a planted secret", () => {
     });
   }
 
+  for (const scenario of SCENARIOS) {
+    it(`signing in, and the session's commands, when ${scenario.label}`, async () => {
+      for (const person of [false, true]) {
+        for (const output of ["", "json", "text"]) {
+          for (const keyring of [memoryKeyring(), unreachableKeyring()]) {
+            Object.assign(server, { tokenAnswers: scenario.tokens, whoamiAnswer: "ok", revokeStatus: 200 });
+            const store = testStore(dir, keyring);
+            const env = { HAAU3_API_KEY: IN_ENVIRONMENT, HAAU3_OUTPUT: output, HAAU3_PLATFORM_URL: server.url };
+            const io = { store, ...fakeClock(), ...(person ? { stdin: { isTTY: true }, openBrowser: async () => true, enter: () => ({ pressed: Promise.resolve(), stop() {} }) } : {}) };
+            const run = async (args: string[]) => {
+              const out = await runCli(args, { tty: person, env, cwd: project, io });
+              assertClean(out.stdout, `stdout of ${args.join(" ")}`);
+              assertClean(out.stderr, `stderr of ${args.join(" ")}`);
+            };
+            await run(["login"]);
+            await run(["login"]);
+            await run(["login", "--complete"]);
+            server.whoamiAnswer = scenario.whoami;
+            server.revokeStatus = scenario.revokeStatus;
+            await run(["login"]);
+            await run(["whoami"]);
+            await run(["logout"]);
+            await run(["whoami"]);
+            await run(["logout"]);
+            await store.clear(server.url);
+          }
+        }
+      }
+      // The refresh token is never kept, and never sent anywhere.
+      expect(readFileOr(join(dir, "session.json"))).not.toContain(REFRESH_TOKEN);
+      expect(server.requests.map((r) => r.body + JSON.stringify(r.headers)).join("")).not.toContain(REFRESH_TOKEN);
+    });
+  }
+
   it("as a real process, whose stdout is a pipe", () => {
-    const labels = ["no arguments", "--version", "--json --help", "an unknown command", "the key as a command", "the key as --json's value"];
+    const labels = ["no arguments", "--version", "--json --help", "an unknown command", "the key as a command", "the key as --json's value", "the key after login"];
     for (const [label, args] of COMMANDS.filter(([l]) => labels.includes(l))) {
       const out = spawnCli(args, { cwd: project, env: { HAAU3_API_KEY: IN_ENVIRONMENT, NEIGHBOUR_TOKEN: NEIGHBOUR } });
       expect(out.code === 0 || out.code === 2, label).toBe(true);
@@ -93,7 +173,32 @@ describe("no command prints a planted secret", () => {
       assertClean(out.stderr, `stderr of ${label}`);
     }
   });
+
+  it("signing in as a real process, the session in a file, which never holds the refresh token", async () => {
+    server.interval = 1;
+    const env = { HAAU3_API_KEY: IN_ENVIRONMENT, HAAU3_PLATFORM_URL: server.url, HAAU3_SESSION_STORE: "file", HAAU3_CONFIG_DIR: dir };
+    for (const args of [["login"], ["login", "--complete"], ["whoami"]]) {
+      const out = await spawnCliAsync(args, { cwd: project, env });
+      expect(out.code, args.join(" ")).toBe(0);
+      assertClean(out.stdout, `stdout of ${args.join(" ")}`);
+      assertClean(out.stderr, `stderr of ${args.join(" ")}`);
+    }
+    const kept = readFileSync(join(dir, "session.json"), "utf8");
+    expect(kept).toContain(ACCESS_TOKEN);
+    expect(kept).not.toContain(REFRESH_TOKEN);
+    const out = await spawnCliAsync(["logout"], { cwd: project, env });
+    expect(out.code).toBe(0);
+    assertClean(out.stdout + out.stderr, "logout");
+  });
 });
+
+function readFileOr(path: string): string {
+  try {
+    return readFileSync(path, "utf8");
+  } catch {
+    return "";
+  }
+}
 
 describe("a found key prints as hidden however it is printed", () => {
   for (const [where, env] of [
@@ -120,6 +225,31 @@ describe("a found key prints as hidden however it is printed", () => {
       expect(String(key)).toBe("[haau3 key hidden]");
       expect(inspect(key)).toBe("[haau3 key hidden]");
       expect(JSON.stringify(key)).toBe('"[haau3 key hidden]"');
+    });
+  }
+});
+
+describe("an access token and a device code print as hidden however they are printed", () => {
+  for (const [label, secret, shownAs] of [
+    ["an access token", new AccessToken(ACCESS_TOKEN), "[haau3 token hidden]"],
+    ["a device code", new DeviceCode(DEVICE_CODE), "[haau3 device code hidden]"],
+  ] as const) {
+    it(label, () => {
+      const holder = { secret, nested: { secret } };
+      const shown = [
+        JSON.stringify(holder),
+        inspect(holder, { depth: Infinity, showHidden: true }),
+        format("%s %o %O %j", secret, secret, holder, holder),
+        String(secret),
+        `${secret}`,
+        secret + "",
+        new Error(`the call with ${secret} failed`).message,
+        JSON.stringify({ ...secret }),
+        JSON.stringify(Object.entries(secret)),
+      ];
+      for (const [i, text] of shown.entries()) assertClean(text, `printing number ${i}`);
+      expect(String(secret)).toBe(shownAs);
+      expect(secret.reveal()).toBe(label === "an access token" ? ACCESS_TOKEN : DEVICE_CODE);
     });
   }
 });

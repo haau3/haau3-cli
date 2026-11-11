@@ -11,7 +11,7 @@ describe("help", () => {
     for (const tty of [true, false]) {
       const out = await runCli(args, { tty });
       expect(out.code).toBe(0);
-      expect(out.stdout).toContain("Usage: haau3 [options]");
+      expect(out.stdout).toContain("Usage: haau3 [command] [options]");
       expect(out.stdout).toContain("HAAU3_OUTPUT");
       expect(out.stderr).toBe("");
     }
@@ -27,14 +27,21 @@ describe("help", () => {
       const out = await runCli([...args], { tty: true, env });
       const document = json(out.stdout);
       expect(out.code).toBe(0);
-      expect(document).toMatchObject({ formatVersion: "1.0", command: "help", ok: true, environment: null, error: null });
+      expect(document).toMatchObject({ formatVersion: "1.1", command: "help", ok: true, environment: null, error: null });
       expect(document.data).toEqual(HELP);
     }
   });
 
   it("lists every option the parser takes", async () => {
     expect(HELP.options.map((o) => o.name)).toEqual(["--json", "-h, --help", "--version"]);
-    expect(HELP.commands).toEqual([]);
+  });
+
+  it("lists every command, and every variable the commands read", async () => {
+    expect(HELP.commands.map((c) => c.name)).toEqual(["login", "login --complete", "whoami", "logout"]);
+    expect(HELP.environment.map((e) => e.name)).toEqual(["HAAU3_OUTPUT", "HAAU3_PLATFORM_URL", "HAAU3_SESSION_STORE", "HAAU3_CONFIG_DIR"]);
+    const text = (await runCli(["--help"])).stdout;
+    expect(text).toContain("Commands:\n  login ");
+    for (const entry of [...HELP.commands, ...HELP.environment]) expect(text).toContain(entry.description);
   });
 });
 
@@ -54,7 +61,7 @@ describe("version", () => {
   it("is a JSON document when asked for", async () => {
     const out = await runCli(["--version", "--json"], { tty: true });
     expect(json(out.stdout)).toEqual({
-      formatVersion: "1.0",
+      formatVersion: "1.1",
       cli: "haau3",
       cliVersion: VERSION,
       command: "version",
@@ -72,7 +79,7 @@ describe("a usage error", () => {
     expect(out.code).toBe(2);
     expect(out.stderr).toBe("");
     expect(json(out.stdout)).toEqual({
-      formatVersion: "1.0",
+      formatVersion: "1.1",
       cli: "haau3",
       cliVersion: VERSION,
       command: null,

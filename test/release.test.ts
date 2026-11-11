@@ -21,10 +21,17 @@ describe("the package", () => {
     expect(pkg.engines).toEqual({ node: ">=22" });
   });
 
-  it("has no runtime dependency", () => {
-    expect(pkg.dependencies).toBeUndefined();
+  it("has one runtime dependency, the credential store's, pinned exactly", () => {
+    expect(pkg.dependencies).toEqual({ "@napi-rs/keyring": "2.1.2" });
     expect(pkg.optionalDependencies).toBeUndefined();
     expect(pkg.peerDependencies).toBeUndefined();
+  });
+
+  it("loads the credential store's package only in a child process, so a computer it cannot load on, or a call that hangs, cannot stop the command", () => {
+    for (const file of ["src/main.ts", "src/cli.ts", "src/session/store.ts", "src/session/keyring.ts"]) {
+      expect(read(file), file).not.toMatch(/import[\s(][^;]*@napi-rs\/keyring/);
+    }
+    expect(read("src/session/keyring.ts")).toContain('createRequire(process.argv[1])("@napi-rs/keyring")');
   });
 
   it("starts its executable with a shebang", () => {
