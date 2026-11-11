@@ -63,8 +63,19 @@ describe("ci.yml", () => {
   });
 
   it("runs the packed package on each system after the tests", () => {
-    const run = ci.jobs.test.steps.map((s: any) => s.run).filter(Boolean);
+    const run = ci.jobs.test.steps.filter((s: any) => s.run && !s.if).map((s: any) => s.run);
     expect(run).toEqual(["pnpm install --frozen-lockfile", "pnpm test", "pnpm build", "pnpm check:bin"]);
+  });
+
+  it("tests the session store against each system's own credential store, a keyring started first on Linux", () => {
+    expect(ci.jobs.test.env).toEqual({ HAAU3_TEST_OS_STORE: "1" });
+    const steps = ci.jobs.test.steps;
+    const keyring = steps.findIndex((s: any) => s.if === "runner.os == 'Linux'");
+    expect(keyring).toBeGreaterThan(-1);
+    expect(steps[keyring].run).toContain("gnome-keyring-daemon --unlock");
+    expect(steps[keyring].run).toContain('>> "$GITHUB_ENV"');
+    expect(keyring).toBeLessThan(steps.findIndex((s: any) => s.run === "pnpm test"));
+    expect(steps.filter((s: any) => s.if)).toHaveLength(1);
   });
 
   it("checks types, lint and the package once", () => {
