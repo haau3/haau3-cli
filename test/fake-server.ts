@@ -1,5 +1,5 @@
 // A stand-in for the platform and its sign-in service on one local port: the platform's
-// protected-resource metadata and whoami, and an authorization server under /issuer with its own
+// protected-resource metadata, whoami and keys, and an authorization server under /issuer with its own
 // metadata, device authorization, token and revocation endpoints. Each answer is scripted per test,
 // and every request is recorded. The tokens and the device code it hands out are planted markers, so
 // the secrets test can look for them in everything the command line prints and keeps.
@@ -13,6 +13,34 @@ export const REFRESH_TOKEN = ["oat", `${CORE}refresh`].join("_");
 export const DEVICE_CODE = `${CORE}devicecode`;
 export const USER_CODE = "WDJB-MJHT";
 export const SIGN_IN_MARKERS = [ACCESS_TOKEN, REFRESH_TOKEN, DEVICE_CODE, CORE];
+
+/**
+ * The new key's secret. Its first six characters after the mode's prefix are plain, as the prefix the
+ * keys page shows; the marker comes straight after, so anything printed past the prefix is caught.
+ */
+export const NEW_KEY_CORE = ["PLANTED", "NEWKEY", "9d4b2a"].join("");
+export const SHOWN = "Abc123";
+export function newKey(mode: "live" | "test"): string {
+  return ["haau3", "sk", mode, `${SHOWN}${NEW_KEY_CORE}rest`].join("_");
+}
+export function newKeyPrefix(mode: "live" | "test"): string {
+  return ["haau3", "sk", mode, SHOWN].join("_");
+}
+/** A whole new key, its marker, and the prefix with a few characters more, which is already a leak. */
+export const NEW_KEY_MARKERS = [newKey("live"), newKey("test"), NEW_KEY_CORE, `${SHOWN}${NEW_KEY_CORE.slice(0, 3)}`];
+
+export type KeysAnswer =
+  | "created"
+  | "unauthorized"
+  | "not-a-member"
+  | "no-organization"
+  | "unavailable"
+  | "off"
+  | "garbled"
+  | "wrong-mode"
+  | "bad-secret"
+  | "invalid-request"
+  | "no-answer";
 
 export type TokenAnswer =
   | "pending"
@@ -64,6 +92,9 @@ export class FakeServer {
   scopes = ["user:org:read"];
   /** The organization's name whoami gives, to try what a name someone chose can hold. */
   organizationName = WHOAMI.organization.name;
+  keysAnswer: KeysAnswer = "created";
+  /** Runs when a key is asked for, before the answer: to change the project meanwhile. */
+  onKeys: (() => void) | null = null;
   /** How many token requests were answered, the spent code's included. */
   get polls(): number {
     return this.#polls;
@@ -197,6 +228,49 @@ export class FakeServer {
         const expiresAt = this.whoamiExpiresAt ?? new Date((this.#issuedAt || Date.now()) + 3_600_000).toISOString();
         const organization = { ...WHOAMI.organization, name: this.organizationName };
         return json(200, { ...WHOAMI, organization, session: { expiresAt } }, { "Cache-Control": "no-store" });
+      }
+      case "/api/cli/v1/keys": {
+        const challenge = { "WWW-Authenticate": `Bearer resource_metadata="${this.url}/.well-known/oauth-protected-resource/api/cli/v1"` };
+        if (this.keysAnswer === "off") return problem(404, "not-found");
+        if (req.method !== "POST") return problem(405, "method-not-allowed");
+        if (req.headers.authorization !== `Bearer ${ACCESS_TOKEN}` || !this.#live) return problem(401, "unauthorized", challenge);
+        this.onKeys?.();
+        if (this.keysAnswer === "no-answer") {
+          res.destroy();
+          return;
+        }
+        if (this.keysAnswer === "unauthorized") return problem(401, "unauthorized", challenge);
+        if (this.keysAnswer === "not-a-member" || this.keysAnswer === "no-organization") return problem(403, this.keysAnswer);
+        if (this.keysAnswer === "unavailable") return problem(503, "unavailable", { "Retry-After": "30" });
+        if (this.keysAnswer === "invalid-request") return problem(400, "invalid-request");
+        let asked: { name?: unknown; mode?: unknown } = {};
+        try {
+          asked = JSON.parse(body) as typeof asked;
+        } catch {
+          return problem(400, "invalid-request");
+        }
+        const mode = asked.mode === "test" ? "test" : "live";
+        const made = {
+          id: "key_fake_1",
+          orgId: WHOAMI.organization.id,
+          name: asked.name,
+          keyPrefix: newKeyPrefix(mode),
+          createdBy: WHOAMI.member.id,
+          createdAt: new Date().toISOString(),
+          lastUsedAt: null,
+          revokedAt: null,
+          managed: false,
+          mode,
+          createdVia: "cli",
+          secret: newKey(mode),
+        };
+        if (this.keysAnswer === "garbled") return json(201, { id: made.id, secret: made.secret });
+        if (this.keysAnswer === "wrong-mode") {
+          const other = mode === "live" ? "test" : "live";
+          return json(201, { ...made, secret: newKey(other), keyPrefix: newKeyPrefix(other) });
+        }
+        if (this.keysAnswer === "bad-secret") return json(201, { ...made, secret: `${made.secret}\nEVIL=1` });
+        return json(201, made, { "Cache-Control": "no-store" });
       }
       default:
         return problem(404, "not-found");

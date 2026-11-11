@@ -60,7 +60,7 @@ describe("login with no terminal, as an agent runs it", () => {
     const out = await cli(["login"]);
     expect(out.code).toBe(0);
     const document = json(out.stdout);
-    expect(document).toMatchObject({ formatVersion: "1.1", command: "login", ok: true, environment: null, error: null });
+    expect(document).toMatchObject({ formatVersion: "1.2", command: "login", ok: true, environment: null, error: null });
     expect(document.data).toEqual({
       status: "approval-needed",
       verificationUri: `${server.url}/device`,
@@ -115,7 +115,7 @@ describe("login with no terminal, as an agent runs it", () => {
       organization: WHOAMI.organization,
       platform: server.url,
       session: { expiresAt: expect.any(String), store: "keyring", storeName: keyringName(), storePath: null },
-      next: [{ command: "npx haau3 whoami", description: expect.any(String) }],
+      next: [{ command: "npx haau3 keys create", description: expect.any(String) }],
     });
     expect(stored().session).toMatchObject({ accessToken: ACCESS_TOKEN, member: WHOAMI.member, clientId: "client_fake" });
     expect(stored().pending).toBeUndefined();
@@ -231,7 +231,7 @@ describe("login when there is a session", () => {
     const { data } = json(out.stdout);
     expect(data.status).toBe("already-signed-in");
     expect(data.member).toEqual(WHOAMI.member);
-    expect(data.next.map((s: { command: string }) => s.command)).toEqual(["npx haau3 whoami", "npx haau3 logout"]);
+    expect(data.next.map((s: { command: string }) => s.command)).toEqual(["npx haau3 keys create", "npx haau3 whoami", "npx haau3 logout"]);
     expect(server.to("/issuer/device")).toHaveLength(devices);
   });
 
@@ -341,7 +341,7 @@ describe("login at a terminal, as a person runs it", () => {
     expect(out.stdout).toContain("Press Enter to open the page in your browser.\nWaiting for your approval...\n");
     expect(out.stdout).toContain("Signed in as dev@example.com in Example Org.\nThe session ends at ");
     expect(out.stdout).toContain(`It is kept in ${keyringName()}.`);
-    expect(out.stdout).toContain("Next:\n  npx haau3 whoami\n");
+    expect(out.stdout).toContain("Next:\n  npx haau3 keys create\n");
     expect(out.stdout).not.toContain("user_code=");
     expect(out.stderr).toBe("");
   });
