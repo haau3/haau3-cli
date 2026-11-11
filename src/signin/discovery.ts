@@ -2,7 +2,7 @@
 // publishes its protected-resource metadata (RFC 9728), which names the authorization server and the
 // command line's public client id; the authorization server publishes its own (RFC 8414), which
 // names the device, token and revocation endpoints. Nothing about the sign-in service is built in.
-import { isSafeAddress } from "../environment.js";
+import { DEFAULT_PLATFORM_URL, isSafeAddress } from "../environment.js";
 import type { CliError } from "../output.js";
 import { call, isRecord, problemOf, retryAfterSeconds, text, type HttpResult } from "./http.js";
 
@@ -62,11 +62,14 @@ export async function discover(platformURL: string): Promise<DiscoveryResult> {
     return fail(unexpected(`${host}'s sign-in details are not for its command-line endpoints.`));
   }
   const servers = metadata.authorization_servers;
-  const issuer = Array.isArray(servers) && servers.length >= 1 ? address(servers[0]) : undefined;
+  const issuer = Array.isArray(servers) && servers.length >= 1 ? checkIssuer(servers[0]) : undefined;
   const clientId = text(metadata.haau3_client_id, 200);
   if (!issuer || !clientId) return fail(unexpected(`${host}'s sign-in details name no usable sign-in service.`));
-  const scopes = Array.isArray(metadata.scopes_supported) ? metadata.scopes_supported : [];
-  if (!scopes.every((s) => typeof s === "string" && SCOPE_TOKEN.test(s))) return fail(unexpected(`${host}'s sign-in details name a scope haau3 cannot ask for.`));
+  if (!issuerAllowed(platformURL, issuer)) return fail(unexpected(`${host} named a sign-in service outside haau3.com.`));
+  const listed = Array.isArray(metadata.scopes_supported) ? metadata.scopes_supported : [];
+  if (!listed.every((s) => typeof s === "string" && SCOPE_TOKEN.test(s))) return fail(unexpected(`${host}'s sign-in details name a scope haau3 cannot ask for.`));
+  // Never offline_access: the command line asks for no refresh token, and keeps none it is given.
+  const scopes = (listed as string[]).filter((s) => s !== "offline_access");
 
   const issuerHost = new URL(issuer).host;
   const serverAnswer = await call(authorizationServerMetadataURL(issuer));
@@ -77,9 +80,9 @@ export async function discover(platformURL: string): Promise<DiscoveryResult> {
   if (server.issuer !== issuer) return fail(unexpected(`The sign-in service at ${issuerHost} names another issuer.`));
   const grants = server.grant_types_supported;
   if (Array.isArray(grants) && !grants.includes(DEVICE_GRANT)) return fail(unexpected(`The sign-in service at ${issuerHost} does not offer sign-in by code.`));
-  const deviceEndpoint = endpoint(server.device_authorization_endpoint, issuer);
-  const tokenEndpoint = endpoint(server.token_endpoint, issuer);
-  const revocationEndpoint = endpoint(server.revocation_endpoint, issuer);
+  const deviceEndpoint = checkEndpoint(server.device_authorization_endpoint, issuer);
+  const tokenEndpoint = checkEndpoint(server.token_endpoint, issuer);
+  const revocationEndpoint = checkEndpoint(server.revocation_endpoint, issuer);
   if (!deviceEndpoint || !tokenEndpoint || !revocationEndpoint) return fail(unexpected(`The sign-in service at ${issuerHost} does not name the endpoints haau3 needs on its own address.`));
 
   return {
@@ -89,7 +92,7 @@ export async function discover(platformURL: string): Promise<DiscoveryResult> {
 }
 
 /** An issuer: https, or http on this computer, with no user, query or fragment. */
-function address(value: unknown): string | undefined {
+export function checkIssuer(value: unknown): string | undefined {
   const raw = text(value, 500);
   if (!raw) return undefined;
   try {
@@ -101,8 +104,11 @@ function address(value: unknown): string | undefined {
   }
 }
 
-/** An endpoint on the issuer's own origin, so a token is never sent anywhere the issuer is not. */
-function endpoint(value: unknown, issuer: string): string | undefined {
+/**
+ * An endpoint on the issuer's own origin, so a token is never sent anywhere the issuer is not. RFC 8414
+ * allows an endpoint elsewhere; this command line does not.
+ */
+export function checkEndpoint(value: unknown, issuer: string): string | undefined {
   const raw = text(value, 500);
   if (!raw) return undefined;
   try {
@@ -112,6 +118,27 @@ function endpoint(value: unknown, issuer: string): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+/**
+ * haau3's own platform signs in only on a haau3.com host, so an answer from it that names any other is
+ * refused. Another platform address, for development, names whatever it serves.
+ */
+export function issuerAllowed(platformURL: string, issuer: string): boolean {
+  if (platformURL !== DEFAULT_PLATFORM_URL) return true;
+  const url = new URL(issuer);
+  return url.protocol === "https:" && (url.hostname === "haau3.com" || url.hostname.endsWith(".haau3.com"));
+}
+
+/** Whether a stored service is the one discovery finds now: the same issuer, client and endpoints. */
+export function sameService(a: SignInService, b: SignInService): boolean {
+  return (
+    a.issuer === b.issuer &&
+    a.clientId === b.clientId &&
+    a.deviceEndpoint === b.deviceEndpoint &&
+    a.tokenEndpoint === b.tokenEndpoint &&
+    a.revocationEndpoint === b.revocationEndpoint
+  );
 }
 
 function fail(error: CliError): DiscoveryResult {

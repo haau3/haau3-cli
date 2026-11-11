@@ -4,7 +4,7 @@
 // and a value it does not expect (a new plan, say) is carried rather than refused.
 import type { CliError, Problem } from "../output.js";
 import { CLI_API_PATH, platformUnavailable } from "./discovery.js";
-import { call, isRecord, problemOf, text } from "./http.js";
+import { call, dateOf, displayText, isRecord, problemOf, text } from "./http.js";
 import type { AccessToken } from "./secret.js";
 
 export interface Whoami {
@@ -18,22 +18,23 @@ export interface Whoami {
 }
 
 export type WhoamiResult =
-  | { kind: "ok"; whoami: Whoami }
+  /** `platformNow` is the answer's Date header, so the session's end can be read on this computer's clock. */
+  | { kind: "ok"; whoami: Whoami; platformNow: number | undefined }
   /** The session is over: the platform no longer takes the token. */
   | { kind: "ended"; problem: Problem }
   /** The member is not in the organization the session was approved for, or picked none. */
   | { kind: "no-organization"; code: "not-a-member" | "no-organization"; problem: Problem }
   | { kind: "error"; error: CliError };
 
-export async function readWhoami(platformURL: string, token: AccessToken): Promise<WhoamiResult> {
+export async function readWhoami(platformURL: string, token: AccessToken, timeoutMs?: number): Promise<WhoamiResult> {
   const host = new URL(platformURL).host;
-  const answer = await call(`${platformURL}${CLI_API_PATH}/whoami`, { bearer: token });
+  const answer = await call(`${platformURL}${CLI_API_PATH}/whoami`, { bearer: token, timeoutMs });
   if (!answer.answered) {
     return { kind: "error", error: { code: "platform-unreachable", message: `${host} did not answer. Check the connection and try again.`, next: [{ command: "npx haau3 whoami", description: "Ask again." }] } };
   }
   if (answer.status === 200) {
     const whoami = parseWhoami(answer.body);
-    if (whoami) return { kind: "ok", whoami };
+    if (whoami) return { kind: "ok", whoami, platformNow: dateOf(answer.headers) };
     return { kind: "error", error: { code: "unexpected-answer", message: `${host} answered with a description of the session haau3 cannot read.`, next: [{ command: "npx haau3@latest --version", description: "Check for a newer haau3." }] } };
   }
   const problem = problemOf(answer);
@@ -49,14 +50,15 @@ export function parseWhoami(body: unknown): Whoami | undefined {
   if (!isRecord(body)) return undefined;
   const { member, organization, plan, usage, session } = body;
   if (!isRecord(member) || !isRecord(organization) || !isRecord(plan) || !isRecord(session)) return undefined;
+  // Ids and times must be clean; names someone chose are shown with anything unsafe replaced.
   const memberId = text(member.id, 200);
-  const email = member.email === null ? null : text(member.email, 320);
+  const email = member.email === null ? null : displayText(member.email, 320);
   const orgId = text(organization.id, 200);
-  const orgName = text(organization.name, 200);
-  const slug = organization.slug === null ? null : text(organization.slug, 200);
-  const role = text(body.role, 100);
+  const orgName = displayText(organization.name, 200);
+  const slug = organization.slug === null ? null : displayText(organization.slug, 200);
+  const role = displayText(body.role, 100);
   const tier = text(plan.tier, 50);
-  const planName = text(plan.name, 100);
+  const planName = displayText(plan.name, 100);
   const expiresAt = text(session.expiresAt, 40);
   if (!memberId || email === undefined || !orgId || !orgName || slug === undefined || !role || !tier || !planName) return undefined;
   if (!expiresAt || Number.isNaN(Date.parse(expiresAt))) return undefined;
@@ -65,7 +67,7 @@ export function parseWhoami(body: unknown): Whoami | undefined {
   if (usage !== null) {
     if (!isRecord(usage)) return undefined;
     const { count, allowance } = usage;
-    const headline = text(usage.headline, 200);
+    const headline = displayText(usage.headline, 200);
     if (!Number.isSafeInteger(count) || (count as number) < 0 || !headline) return undefined;
     if (allowance !== null && (!Number.isSafeInteger(allowance) || (allowance as number) <= 0)) return undefined;
     readUsage = { count: count as number, allowance: allowance as number | null, headline };

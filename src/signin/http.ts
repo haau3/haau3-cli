@@ -14,6 +14,8 @@ export interface HttpRequest {
   /** Sent as application/x-www-form-urlencoded, which OAuth's endpoints take; makes it a POST. */
   form?: Record<string, string>;
   bearer?: AccessToken;
+  /** How long the request may take, the body included. 30 seconds unless the caller has less to spare. */
+  timeoutMs?: number;
 }
 
 /** An answer, its body parsed when it is JSON; or no answer at all. */
@@ -35,7 +37,7 @@ export async function call(url: string, request: HttpRequest = {}): Promise<Http
       headers,
       body,
       redirect: "manual",
-      signal: AbortSignal.timeout(TIMEOUT_MS),
+      signal: AbortSignal.timeout(Math.max(1, request.timeoutMs ?? TIMEOUT_MS)),
     });
     const text = await readBounded(response);
     return { answered: true, status: response.status, headers: response.headers, body: parseJson(text) };
@@ -76,11 +78,30 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** A string field of at most `max` characters with no control characters, or undefined. */
+/**
+ * Characters a terminal can act on, or that change how text reads without showing: C0 and C1 control
+ * characters (C1 includes CSI and OSC, which some terminals obey), format characters (the bidi
+ * overrides among them) and the line and paragraph separators.
+ */
+const UNSAFE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u;
+const UNSAFE_ALL = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu;
+/** The joiners emoji sequences need. Shown as they are; nothing else in UNSAFE is. */
+const JOINERS = /[‌‍]/;
+
+/** A protocol value (a code, an address, an id) of at most `max` characters with no unsafe character, or undefined. */
 export function text(value: unknown, max = 300): string | undefined {
   if (typeof value !== "string" || value.length === 0 || value.length > max) return undefined;
-  // eslint-disable-next-line no-control-regex
-  return /[\u0000-\u001f\u007f]/.test(value) ? undefined : value;
+  return UNSAFE.test(value) ? undefined : value;
+}
+
+/**
+ * A name to show a person (an organization, an email, a plan), at most `max` characters, with every
+ * unsafe character but the emoji joiners replaced by U+FFFD, so a name someone else chose can neither
+ * steer the terminal nor read as something it is not. Undefined when it is not a string, or empty.
+ */
+export function displayText(value: unknown, max = 300): string | undefined {
+  if (typeof value !== "string" || value.length === 0 || value.length > max) return undefined;
+  return value.replace(UNSAFE_ALL, (c) => (JOINERS.test(c) ? c : "�"));
 }
 
 const CODE = /^[a-z0-9][a-z0-9_-]{0,59}$/;
@@ -99,6 +120,13 @@ export function problemOf(result: { status: number; headers: Headers; body: unkn
   const requestId = result.headers.get("x-request-id");
   if (requestId && REQUEST_ID.test(requestId)) problem.requestId = requestId;
   return problem;
+}
+
+/** The answer's Date header (RFC 9110, section 6.6.1) in milliseconds since the epoch, when it has one. */
+export function dateOf(headers: Headers): number | undefined {
+  const value = headers.get("date");
+  const at = value ? Date.parse(value) : Number.NaN;
+  return Number.isNaN(at) ? undefined : at;
 }
 
 /** Retry-After in whole seconds, when the answer gives it as a number (RFC 9110, section 10.2.3). */
