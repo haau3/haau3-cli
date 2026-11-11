@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.2](https://github.com/haau3/haau3-cli/compare/v0.1.1...v0.1.2) (2026-11-11)
+
+
+### Features
+
+* haau3 keys create ([#6](https://github.com/haau3/haau3-cli/issues/6)) ([0ae9897](https://github.com/haau3/haau3-cli/commit/0ae9897dd0a6a8d633ddcfa026fedf5527b36053))
+
 ## [0.1.1](https://github.com/haau3/haau3-cli/compare/v0.1.0...v0.1.1) (2026-11-11)
 
 
