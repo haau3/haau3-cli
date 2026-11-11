@@ -72,7 +72,8 @@ describe("ci.yml", () => {
     const steps = ci.jobs.test.steps;
     const keyring = steps.findIndex((s: any) => s.if === "runner.os == 'Linux'");
     expect(keyring).toBeGreaterThan(-1);
-    expect(steps[keyring].run).toContain("gnome-keyring-daemon --unlock");
+    // An empty password makes no login keyring, so no default collection, and every write fails.
+    expect(steps[keyring].run).toMatch(/printf '[^']+' \| gnome-keyring-daemon .*--unlock/);
     expect(steps[keyring].run).toContain('>> "$GITHUB_ENV"');
     expect(keyring).toBeLessThan(steps.findIndex((s: any) => s.run === "pnpm test"));
     expect(steps.filter((s: any) => s.if)).toHaveLength(1);

@@ -42,7 +42,9 @@ jobs:
           sudo apt-get install -y -q --no-install-recommends gnome-keyring dbus-x11
           eval "$(dbus-launch --sh-syntax)"
           echo "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" >> "$GITHUB_ENV"
-          printf '' | gnome-keyring-daemon --unlock --components=secrets
+          # A password makes the daemon create the login keyring, the default collection items go to.
+          # With an empty one it creates none, and every write finds no collection.
+          printf 'ci-only-keyring' | gnome-keyring-daemon --daemonize --components=secrets --unlock
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
       - run: pnpm build
