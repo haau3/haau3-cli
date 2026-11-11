@@ -2,7 +2,7 @@
 // or a relative PATH entry, so a project that ships a program named git can never have it run. A
 // planted git writes a marker if it ever runs; the marker must stay absent.
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -48,6 +48,20 @@ describe("finding git", () => {
     expect(dirname(found!)).toBe(real);
   });
 
+  it("skips a git anywhere inside the project, and any in node_modules, where npx puts its bins first", () => {
+    const modules = join(project, "node_modules", ".bin");
+    const elsewhere = mkdtempSync(join(tmpdir(), "cli-git-modules-"));
+    try {
+      const outsideModules = join(elsewhere, "node_modules", ".bin");
+      for (const folder of [modules, join(project, "tools"), outsideModules]) plantGit(folder);
+      const real = realGitFolder();
+      const found = findGit(env([modules, join(project, "tools"), outsideModules, real].join(delimiter)), project);
+      expect(dirname(found!)).toBe(real);
+    } finally {
+      rmSync(elsewhere, { recursive: true, force: true });
+    }
+  });
+
   it("finds nothing when PATH holds no git", () => {
     expect(findGit(env(""), project)).toBeNull();
     plantGit(project);
@@ -88,5 +102,33 @@ describe("asking git", () => {
     expect(await gitAnswer(join(project, ".env.local"), path, project)).toEqual({ kind: "not-ignored", tracked: false });
     writeFileSync(join(project, ".gitignore"), ".env*\n");
     expect(await gitAnswer(join(project, ".env.local"), path, project)).toEqual({ kind: "ignored" });
+  });
+
+  it("is not misled by a GIT_DIR inherited from a hook, which would make git read the wrong index", async () => {
+    execFileSync("git", ["init", "-q"], { cwd: project });
+    mkdirSync(join(project, "app"));
+    writeFileSync(join(project, "app", ".env"), "A=1\n");
+    execFileSync("git", ["add", join("app", ".env")], { cwd: project });
+    writeFileSync(join(project, ".gitignore"), ".env\n");
+    const inherited = { ...env(process.env.PATH ?? process.env.Path ?? ""), GIT_DIR: join(project, ".git"), GIT_WORK_TREE: join(project, "app") };
+    expect(await gitAnswer(join(project, "app", ".env"), inherited, project)).toEqual({ kind: "not-ignored", tracked: true });
+  });
+
+  it.skipIf(process.platform === "linux")("asks about the file by the name the disk has, whatever case it was typed in", async () => {
+    execFileSync("git", ["init", "-q"], { cwd: project });
+    writeFileSync(join(project, "Prod.env"), "A=1\n");
+    execFileSync("git", ["add", "Prod.env"], { cwd: project });
+    writeFileSync(join(project, ".gitignore"), "*.env\n");
+    const path = env(process.env.PATH ?? process.env.Path ?? "");
+    expect(await gitAnswer(join(project, "prod.env"), path, project)).toEqual({ kind: "not-ignored", tracked: true });
+  });
+
+  it.skipIf(process.platform === "win32")("finds the repository a linked folder really leads into", async () => {
+    const repo = join(project, "repo");
+    mkdirSync(join(repo, "app"), { recursive: true });
+    execFileSync("git", ["init", "-q"], { cwd: repo });
+    symlinkSync(join(repo, "app"), join(project, "alias"));
+    const path = env(process.env.PATH ?? "");
+    expect(await gitAnswer(join(project, "alias", ".env"), path, project)).toEqual({ kind: "not-ignored", tracked: false });
   });
 });

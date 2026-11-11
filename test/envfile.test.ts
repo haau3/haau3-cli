@@ -1,7 +1,7 @@
 // The env file a key goes to, and the edit: every byte that is not the key's line stays as it was,
 // whatever the file holds (comments, quotes, `export`, Windows line endings, a byte-order mark, no
 // last line break), and an edit Node's own parser would read differently is never made.
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { linkSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseEnv } from "node:util";
@@ -75,6 +75,12 @@ describe("the edit", () => {
     const file = `CERT="begin\nHAAU3_API_KEY=${OLD}\nend"\n`;
     expect(planEdit(file, NEW)).toBeNull();
   });
+
+  it("does not edit a file that ends lines with a carriage return alone", () => {
+    // Node's parser drops every CR, so it would read this as one line; dotenv reads three variables.
+    expect(planEdit(`HAAU3_API_KEY=${OLD}\rA=1\rB=2`, NEW)).toBeNull();
+    expect(planEdit("A=1\rB=2\r", NEW)).toBeNull();
+  });
 });
 
 describe("the prefix of a key in the file", () => {
@@ -87,8 +93,8 @@ describe("the prefix of a key in the file", () => {
 });
 
 describe("choosing the file", () => {
-  const choose = (envFile?: string) => {
-    const result = chooseFile({ cwd: project, envFile, env: {} });
+  const choose = (file?: string) => {
+    const result = chooseFile({ cwd: project, file, env: {} });
     if (!result.ok) throw new Error(result.error.code);
     return result.chosen;
   };
@@ -117,9 +123,12 @@ describe("choosing the file", () => {
   it("takes the named file, by an env file's name only", () => {
     expect(choose(".env.production")).toMatchObject({ shown: ".env.production", reason: "named" });
     expect(choose("config/prod.env")).toMatchObject({ shown: join("config", "prod.env") });
-    for (const bad of ["package.json", "env", "my.envrc.json", `${OLD}.env`, "x\u0007.env"]) {
-      const result = chooseFile({ cwd: project, envFile: bad, env: {} });
-      expect(result.ok ? null : result.error.code).toBe("invalid-env-file");
+    expect(choose("my settings/.env")).toMatchObject({ shown: join("my settings", ".env") });
+    // Nothing a shell or a terminal acts on: the path is printed in commands an agent may run.
+    const shell = ["prod$(id).env", "a;id.env", "a`id`.env", "a|b.env", "a&b.env", "it's.env", 'a"b.env', "a>b.env"];
+    for (const bad of ["package.json", "env", "my.envrc.json", `${OLD}.env`, "x\u0007.env", "x\u202E.env", ...shell]) {
+      const result = chooseFile({ cwd: project, file: bad, env: {} });
+      expect(result.ok ? null : result.error.code).toBe("invalid-file");
     }
   });
 });
@@ -173,5 +182,23 @@ describe("the write", () => {
   it("writes nothing that is not of a key's shape", () => {
     const result = writeKey(target(".env"), new ApiKey(`${NEW}\nEVIL=1`), false);
     expect(result.ok).toBe(false);
+  });
+});
+
+describe("files a key is never written to", () => {
+  const refusal = (name: string) => {
+    const result = inspectFile({ path: join(project, name), shown: name, reason: "existing" });
+    return result.ok ? null : result.error.code;
+  };
+
+  it("refuses a file that is not text, such as UTF-16, which Windows PowerShell 5 writes", () => {
+    writeFileSync(join(project, ".env"), Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from("A=1\n", "utf16le")]));
+    expect(refusal(".env")).toBe("env-file-not-text");
+  });
+
+  it("refuses a file with another name, a hard link, one of which git could keep", () => {
+    writeFileSync(join(project, "tracked.env"), "A=1\n");
+    linkSync(join(project, "tracked.env"), join(project, ".env"));
+    expect(refusal(".env")).toBe("env-file-hard-link");
   });
 });

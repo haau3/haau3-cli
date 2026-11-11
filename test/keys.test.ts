@@ -6,7 +6,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { NAME_MAX } from "../src/commands/keys.js";
+import { arg, gitignoreLine, NAME_MAX } from "../src/commands/keys.js";
 import { ACCESS_TOKEN, FakeServer, NEW_KEY_MARKERS, newKey, newKeyPrefix, type KeysAnswer } from "./fake-server.js";
 import { cleanEnv, fakeClock, memoryKeyring, runCli, testStore } from "./helpers.js";
 
@@ -163,8 +163,8 @@ describe("keys create, signed in", () => {
     expect(read(".env")).toBe(`HAAU3_API_KEY=${newKey("live")}\nPORT=3000\n`);
   });
 
-  it("writes to --env-file, which must name an env file, and says when the defaults will not read it", async () => {
-    const out = await cli(["keys", "create", "--env-file", "prod.env"]);
+  it("writes to --file, which must name an env file, and says when the defaults will not read it", async () => {
+    const out = await cli(["keys", "create", "--file", "prod.env"]);
     expect(out.code).toBe(0);
     const data = json(out.stdout).data;
     expect(data.envFile.path).toBe("prod.env");
@@ -173,9 +173,9 @@ describe("keys create, signed in", () => {
 
     const pasted = ["haau3", "sk", "live", "SOMEONEPASTEDTHIS123456"].join("_");
     for (const name of ["config.json", "env", pasted, `.env${pasted}`, "notes.txt"]) {
-      const refused = await cli(["keys", "create", `--env-file=${name}`]);
+      const refused = await cli(["keys", "create", `--file=${name}`]);
       expect(refused.code).toBe(2);
-      expect(json(refused.stdout).error.code).toBe("invalid-env-file");
+      expect(json(refused.stdout).error.code).toBe("invalid-file");
       expect(refused.stdout).not.toContain("SOMEONEPASTED");
       expect(refused.stdout).not.toContain("config.json");
     }
@@ -195,7 +195,7 @@ describe("keys create, signed in", () => {
     expect(out.code).toBe(2);
     expect(json(out.stdout).error.code).toBe("not-a-project");
     expect(keyCalls()).toBe(0);
-    expect((await cli(["keys", "create", "--env-file", ".env"], { env: { HOME: project, USERPROFILE: project } })).code).toBe(0);
+    expect((await cli(["keys", "create", "--file", ".env"], { env: { HOME: project, USERPROFILE: project } })).code).toBe(0);
   });
 
   it.skipIf(process.platform === "win32")("refuses a symbolic link, which can lead to a file git keeps", async () => {
@@ -269,10 +269,10 @@ describe("keys create in a git repository", () => {
 
   it("checks the named file's own folder, and names that folder's .gitignore", async () => {
     mkdirSync(join(project, "app"));
-    const out = await cli(["keys", "create", "--env-file", join("app", ".env")]);
+    const out = await cli(["keys", "create", "--file", join("app", ".env")]);
     expect(json(out.stdout).error.gitignore).toEqual({ file: join("app", ".gitignore"), line: ".env" });
     writeFileSync(join(project, "app", ".gitignore"), ".env\n");
-    expect((await cli(["keys", "create", "--env-file", join("app", ".env")])).code).toBe(0);
+    expect((await cli(["keys", "create", "--file", join("app", ".env")])).code).toBe(0);
   });
 });
 
@@ -309,13 +309,35 @@ describe("keys create and the session", () => {
     expect(existsSync(join(project, ".env"))).toBe(false);
   });
 
-  it("keeps the session when the platform cannot answer just now", async () => {
+  it("keeps the session when the platform cannot answer just now, and says a key may have been made", async () => {
     await signIn();
-    server.keysAnswer = "unavailable";
-    const out = await cli(["keys", "create"]);
-    expect(json(out.stdout).error).toMatchObject({ code: "platform-unavailable", problem: { status: 503, code: "unavailable" } });
+    for (const answer of ["unavailable", "server-error"] as KeysAnswer[]) {
+      server.keysAnswer = answer;
+      const out = await cli(["keys", "create"]);
+      const error = json(out.stdout).error;
+      expect(error.code).toBe("platform-unavailable");
+      // The platform's bound does not stop the write, so a key may exist: look before trying again.
+      expect(error.message).toContain("It may have made a key anyway");
+      expect(error.message).toContain(`${server.url}/dashboard/keys`);
+    }
     expect(server.revoked).toEqual([]);
     expect(keyring.entries.has(server.url)).toBe(true);
+  });
+
+  it("leaves a session another run kept while this one waited on the platform", async () => {
+    await signIn();
+    server.keysAnswer = "unauthorized";
+    const other = ["oat", "ANOTHERRUNSTOKEN"].join("_");
+    server.onKeys = () => {
+      const stored = JSON.parse(keyring.entries.get(server.url)!);
+      stored.session.accessToken = other;
+      keyring.entries.set(server.url, JSON.stringify(stored));
+    };
+    const out = await cli(["keys", "create"]);
+    expect(json(out.stdout).error.code).toBe("session-ended");
+    // This run's grant is ended; the session the other run kept is still there.
+    expect(server.revoked).toEqual([ACCESS_TOKEN]);
+    expect(JSON.parse(keyring.entries.get(server.url)!).session.accessToken).toBe(other);
   });
 
   it("says sign-in from the command line is not open when the platform answers 404", async () => {
@@ -331,7 +353,7 @@ describe("keys create and the session", () => {
 describe("keys create when the answer cannot be used", () => {
   beforeEach(signIn);
 
-  it.each(["garbled", "wrong-mode", "bad-secret"] as KeysAnswer[])("writes nothing for a key answered %s, and says to revoke it", async (answer) => {
+  it.each(["garbled", "wrong-mode", "bad-secret", "key-in-id", "key-in-name", "long-prefix", "ok-200"] as KeysAnswer[])("writes nothing for a key answered %s, and says to revoke it", async (answer) => {
     server.keysAnswer = answer;
     writeFileSync(join(project, ".env"), "PORT=3000\n");
     const out = await cli(["keys", "create"]);
@@ -341,6 +363,13 @@ describe("keys create when the answer cannot be used", () => {
     expect(error.code).toBe("unexpected-answer");
     expect(error.message).toContain("/dashboard/keys");
     expect(read(".env")).toBe("PORT=3000\n");
+  });
+
+  it("prints no member of a problem that holds a key", async () => {
+    server.keysAnswer = "key-in-problem";
+    const out = await cli(["keys", "create"]);
+    assertNoKey(out.stdout + out.stderr);
+    expect(json(out.stdout).error.problem).toEqual({ type: "about:blank", title: "HTTP 400", status: 400, code: "invalid-request" });
   });
 
   it("says a key may have been made when no answer comes", async () => {
@@ -392,7 +421,7 @@ describe("keys create's arguments", () => {
   });
 
   it("says when a flag needs a value, and when another command's flag is given", async () => {
-    for (const args of [["keys", "create", "--name"], ["keys", "create", "--env-file", "--test"]]) {
+    for (const args of [["keys", "create", "--name"], ["keys", "create", "--file", "--test"]]) {
       const out = await cli(args);
       expect(out.code).toBe(2);
       expect(json(out.stdout).error.code).toBe("missing-value");
@@ -400,5 +429,51 @@ describe("keys create's arguments", () => {
     expect(json((await cli(["login", "--name", "x"])).stdout).error).toMatchObject({ code: "unknown-flag", message: "haau3 has no flag --name." });
     expect(json((await cli(["keys", "create", "--test=yes"])).stdout).error).toMatchObject({ code: "invalid-flag", message: "--test takes no value." });
     expect(keyCalls()).toBe(0);
+  });
+
+  it("takes a flag's value before the command, and repeats nothing a flag's value displaced", async () => {
+    await signIn();
+    const out = await cli(["--name", "Worker", "keys", "create"]);
+    expect(out.code).toBe(0);
+    expect(json(server.to("/api/cli/v1/keys")[0]!.body).name).toBe("Worker");
+
+    const pasted = ["haau3", "sk", "live", "SOMEONEPASTEDTHIS123456"].join("_");
+    for (const args of [["--name", "keys", pasted], ["--name", "keys", "create"], ["--file", "keys", pasted, "create"]]) {
+      const refused = await cli(args);
+      expect(refused.code).toBe(2);
+      const document = json(refused.stdout);
+      expect(document.command).toBeNull();
+      expect(document.error.code).toBe("unknown-command");
+      expect(refused.stdout).not.toContain("SOMEONEPASTED");
+    }
+    expect(keyCalls()).toBe(1);
+  });
+
+  it("quotes a path in the commands it suggests, so a shell takes it whole", async () => {
+    execFileSync("git", ["init", "-q"], { cwd: project });
+    mkdirSync(join(project, "my app"));
+    const out = await cli(["keys", "create", "--test", "--file", join("my app", ".env")]);
+    const next = json(out.stdout).error.next[0].command;
+    expect(next).toBe(`npx haau3 keys create --test --file '${join("my app", ".env")}'`);
+  });
+});
+
+describe("a path in a command to run", () => {
+  it("is left as it is when no shell reads any of it, else single-quoted for that shell", () => {
+    expect(arg(".env.local", "linux")).toBe(".env.local");
+    expect(arg("config/prod.env", "linux")).toBe("config/prod.env");
+    expect(arg("my app/.env", "linux")).toBe("'my app/.env'");
+    expect(arg("it's/.env", "darwin")).toBe(`'it'\\''s/.env'`);
+    expect(arg("it's\\.env", "win32")).toBe("'it''s\\.env'");
+    expect(arg("$(id)/.env", "linux")).toBe("'$(id)/.env'");
+  });
+});
+
+describe("a .gitignore line", () => {
+  it("matches the file's name and escapes what git would read as a pattern", () => {
+    expect(gitignoreLine(".env.local")).toBe(".env.local");
+    expect(gitignoreLine("#x.env")).toBe("\\#x.env");
+    expect(gitignoreLine("a[1].env")).toBe("a\\[1].env");
+    expect(gitignoreLine(".env  ")).toBe(".env\\ \\ ");
   });
 });

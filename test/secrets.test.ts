@@ -78,10 +78,13 @@ const COMMANDS: [string, string[]][] = [
   ["the key after keys create", ["keys", "create", IN_ENVIRONMENT]],
   ["the key as --name's value", ["keys", "create", `--name=${IN_ENVIRONMENT}`]],
   ["the key after --name", ["keys", "create", "--name", IN_ENVIRONMENT]],
-  ["the key as --env-file's value", ["keys", "create", `--env-file=${IN_ENVIRONMENT}`]],
-  ["the key after --env-file", ["keys", "create", "--env-file", IN_ENVIRONMENT]],
-  ["the key as an env file's name", ["keys", "create", "--env-file", `.env${IN_ENVIRONMENT}`]],
+  ["the key as --file's value", ["keys", "create", `--file=${IN_ENVIRONMENT}`]],
+  ["the key after --file", ["keys", "create", "--file", IN_ENVIRONMENT]],
+  ["the key as an env file's name", ["keys", "create", "--file", `.env${IN_ENVIRONMENT}`]],
   ["the key as --test's value", ["keys", "create", `--test=${IN_ENVIRONMENT}`]],
+  ["the key after a flag's value took the command's word", ["--name", "keys", IN_ENVIRONMENT]],
+  ["the key after --file took the command's word", ["--file", "keys", IN_ENVIRONMENT, "create"]],
+  ["the key as Node's own --env-file", ["keys", "create", `--env-file=${IN_ENVIRONMENT}`]],
 ];
 
 let project: string;
@@ -227,7 +230,23 @@ function filesUnder(folder: string): [string, string][] {
 }
 
 /** What the stand-in can answer when a key is asked for, each run through every way of running. */
-const KEY_ANSWERS: KeysAnswer[] = ["created", "garbled", "wrong-mode", "bad-secret", "unauthorized", "not-a-member", "unavailable", "off", "no-answer"];
+const KEY_ANSWERS: KeysAnswer[] = [
+  "created",
+  "garbled",
+  "wrong-mode",
+  "bad-secret",
+  "key-in-id",
+  "key-in-name",
+  "long-prefix",
+  "key-in-problem",
+  "ok-200",
+  "unauthorized",
+  "not-a-member",
+  "unavailable",
+  "server-error",
+  "off",
+  "no-answer",
+];
 
 describe("a new key is written to the env file and nowhere else", () => {
   for (const answer of KEY_ANSWERS) {
@@ -242,10 +261,17 @@ describe("a new key is written to the env file and nowhere else", () => {
               const store = testStore(dir, keyring);
               const env = { HAAU3_API_KEY: IN_ENVIRONMENT, HAAU3_OUTPUT: output, HAAU3_PLATFORM_URL: server.url };
               const io = { store, ...fakeClock(), ...(person ? { stdin: { isTTY: true }, openBrowser: async () => true, enter: () => ({ pressed: Promise.resolve(), stop() {} }) } : {}) };
+              /** The session's stores and everything sent, read while the session is still kept. */
+              const storesClean = (when: string) => {
+                for (const [path, text] of filesUnder(dir)) expect(text.includes(NEW_KEY_CORE), `${path} after ${when}`).toBe(false);
+                if ("entries" in keyring) expect([...keyring.entries.values()].join(""), `the credential store after ${when}`).not.toContain(NEW_KEY_CORE);
+                expect(server.requests.map((r) => r.body + JSON.stringify(r.headers)).join("")).not.toContain(NEW_KEY_CORE);
+              };
               const run = async (args: string[]) => {
                 const out = await runCli(args, { tty: person, env, cwd: keys, io });
                 assertClean(out.stdout, `stdout of ${args.join(" ")}`);
                 assertClean(out.stderr, `stderr of ${args.join(" ")}`);
+                storesClean(args.join(" "));
                 return out;
               };
               await run(["login"]);
@@ -254,7 +280,7 @@ describe("a new key is written to the env file and nowhere else", () => {
               server.keysAnswer = answer;
               await run(["keys", "create", "--replace"]);
               server.keysAnswer = "created";
-              await run(["keys", "create", "--test", "--env-file", "sandbox.env"]);
+              await run(["keys", "create", "--test", "--file", "sandbox.env"]);
               await run(["whoami"]);
               await run(["logout"]);
               await store.clear(server.url);
@@ -272,10 +298,6 @@ describe("a new key is written to the env file and nowhere else", () => {
               // A refused session is ended, so the test key that follows is never made.
               const ended = answer === "unauthorized" || answer === "not-a-member";
               expect(holding(newKey("test"))).toEqual(ended ? [] : [join(keys, "sandbox.env")]);
-              // Nowhere else: not the session's stores, and not anything sent anywhere.
-              for (const [path, text] of filesUnder(dir)) expect(text.includes(NEW_KEY_CORE), path).toBe(false);
-              if ("entries" in keyring) expect([...keyring.entries.values()].join("")).not.toContain(NEW_KEY_CORE);
-              expect(server.requests.map((r) => r.body + JSON.stringify(r.headers)).join("")).not.toContain(NEW_KEY_CORE);
             } finally {
               rmSync(keys, { recursive: true, force: true });
             }
@@ -290,14 +312,20 @@ describe("a new key is written to the env file and nowhere else", () => {
     const keys = mkdtempSync(join(tmpdir(), "cli-secrets-keys-"));
     try {
       const env = { HAAU3_API_KEY: IN_ENVIRONMENT, HAAU3_PLATFORM_URL: server.url, HAAU3_SESSION_STORE: "file", HAAU3_CONFIG_DIR: dir };
-      for (const args of [["login"], ["login", "--complete"], ["keys", "create"], ["keys", "create"], ["logout"]]) {
+      // --file as a real process too: a flag Node took as its own would never reach the command line.
+      const runs = [["login"], ["login", "--complete"], ["keys", "create"], ["keys", "create"], ["keys", "create", "--test", "--file", "sandbox.env"], ["keys", "create", `--file=${IN_ENVIRONMENT}.env`]];
+      for (const args of runs) {
         const out = await spawnCliAsync(args, { cwd: keys, env });
+        expect(out.stdout.startsWith("{"), `${args[0]} printed its document`).toBe(true);
         assertClean(out.stdout, `stdout of ${args.join(" ")}`);
         assertClean(out.stderr, `stderr of ${args.join(" ")}`);
       }
-      expect(readFileSync(join(keys, ".env"), "utf8")).toBe(`HAAU3_API_KEY=${newKey("live")}\n`);
-      expect(filesUnder(keys).map(([path]) => path)).toEqual([join(keys, ".env")]);
+      // Read while the session is still kept, then once more after logout.
       for (const [path, text] of filesUnder(dir)) expect(text.includes(NEW_KEY_CORE), path).toBe(false);
+      assertClean((await spawnCliAsync(["logout"], { cwd: keys, env })).stdout, "logout");
+      expect(readFileSync(join(keys, ".env"), "utf8")).toBe(`HAAU3_API_KEY=${newKey("live")}\n`);
+      expect(readFileSync(join(keys, "sandbox.env"), "utf8")).toBe(`HAAU3_API_KEY=${newKey("test")}\n`);
+      expect(filesUnder(keys).map(([path]) => path).sort()).toEqual([join(keys, ".env"), join(keys, "sandbox.env")]);
     } finally {
       rmSync(keys, { recursive: true, force: true });
     }

@@ -18,7 +18,9 @@ export const SIGN_IN_MARKERS = [ACCESS_TOKEN, REFRESH_TOKEN, DEVICE_CODE, CORE];
  * The new key's secret. Its first six characters after the mode's prefix are plain, as the prefix the
  * keys page shows; the marker comes straight after, so anything printed past the prefix is caught.
  */
-export const NEW_KEY_CORE = ["PLANTED", "NEWKEY", "9d4b2a"].join("");
+// Unlike the other planted secrets' cores, which begin PLANTED: the prefix of a key already in a
+// file is printed on purpose, and must not read as a piece of the new one.
+export const NEW_KEY_CORE = ["FRESH", "MINT", "9d4b2a"].join("");
 export const SHOWN = "Abc123";
 export function newKey(mode: "live" | "test"): string {
   return ["haau3", "sk", mode, `${SHOWN}${NEW_KEY_CORE}rest`].join("_");
@@ -26,8 +28,18 @@ export function newKey(mode: "live" | "test"): string {
 export function newKeyPrefix(mode: "live" | "test"): string {
   return ["haau3", "sk", mode, SHOWN].join("_");
 }
-/** A whole new key, its marker, and the prefix with a few characters more, which is already a leak. */
-export const NEW_KEY_MARKERS = [newKey("live"), newKey("test"), NEW_KEY_CORE, `${SHOWN}${NEW_KEY_CORE.slice(0, 3)}`];
+/**
+ * What would show a new key leaking, in part or in another form: the key, its marker, every six
+ * characters running that reach past the prefix the keys page shows (so the prefix and one character
+ * more is caught, and so is the key's tail), and the key reversed and in base64.
+ */
+function leaks(secret: string): string[] {
+  const from = secret.indexOf(SHOWN) + SHOWN.length - 5;
+  const windows: string[] = [];
+  for (let i = from; i + 6 <= secret.length; i++) windows.push(secret.slice(i, i + 6));
+  return [secret, ...windows, [...secret].reverse().join(""), Buffer.from(secret).toString("base64"), Buffer.from(secret).toString("base64url")];
+}
+export const NEW_KEY_MARKERS = [NEW_KEY_CORE, ...leaks(newKey("live")), ...leaks(newKey("test"))];
 
 export type KeysAnswer =
   | "created"
@@ -40,7 +52,14 @@ export type KeysAnswer =
   | "wrong-mode"
   | "bad-secret"
   | "invalid-request"
-  | "no-answer";
+  | "no-answer"
+  /** A broken platform: the key where only facts about it belong. */
+  | "key-in-id"
+  | "key-in-name"
+  | "long-prefix"
+  | "key-in-problem"
+  | "server-error"
+  | "ok-200";
 
 export type TokenAnswer =
   | "pending"
@@ -243,6 +262,11 @@ export class FakeServer {
         if (this.keysAnswer === "not-a-member" || this.keysAnswer === "no-organization") return problem(403, this.keysAnswer);
         if (this.keysAnswer === "unavailable") return problem(503, "unavailable", { "Retry-After": "30" });
         if (this.keysAnswer === "invalid-request") return problem(400, "invalid-request");
+        if (this.keysAnswer === "server-error") return json(500, { type: "about:blank", title: "Internal Server Error", status: 500 });
+        if (this.keysAnswer === "key-in-problem") {
+          const key = newKey("live");
+          return json(400, { type: key, title: key, status: 400, code: "invalid-request" }, { "X-Request-Id": key });
+        }
         let asked: { name?: unknown; mode?: unknown } = {};
         try {
           asked = JSON.parse(body) as typeof asked;
@@ -270,6 +294,10 @@ export class FakeServer {
           return json(201, { ...made, secret: newKey(other), keyPrefix: newKeyPrefix(other) });
         }
         if (this.keysAnswer === "bad-secret") return json(201, { ...made, secret: `${made.secret}\nEVIL=1` });
+        if (this.keysAnswer === "key-in-id") return json(201, { ...made, id: made.secret });
+        if (this.keysAnswer === "key-in-name") return json(201, { ...made, name: `k ${made.secret}` });
+        if (this.keysAnswer === "long-prefix") return json(201, { ...made, keyPrefix: made.secret.slice(0, -1) });
+        if (this.keysAnswer === "ok-200") return json(200, made);
         return json(201, made, { "Cache-Control": "no-store" });
       }
       default:

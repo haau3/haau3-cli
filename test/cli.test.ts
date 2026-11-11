@@ -45,7 +45,7 @@ describe("help", () => {
       "keys create",
       "keys create --test",
       "keys create --name <name>",
-      "keys create --env-file <file>",
+      "keys create --file <file>",
       "keys create --replace",
     ]);
     expect(HELP.environment.map((e) => e.name)).toEqual(["HAAU3_OUTPUT", "HAAU3_PLATFORM_URL", "HAAU3_SESSION_STORE", "HAAU3_CONFIG_DIR"]);
