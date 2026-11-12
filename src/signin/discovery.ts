@@ -163,16 +163,15 @@ export function platformUnavailable(host: string, answer: HttpResult & { answere
   return { code: "platform-unavailable", message: `${host} could not answer just now. ${when}`, next: [], problem: problemOf(answer) };
 }
 
-/** The platform's 404 for its command-line endpoints: carries that answer's problem when given it. */
-export function signInUnavailable(platformURL: string, answer?: HttpResult & { answered: true }): CliError {
+/** The platform's 404 for its command-line endpoints, with that answer's problem. */
+export function signInUnavailable(platformURL: string, answer: HttpResult & { answered: true }): CliError {
   const host = new URL(platformURL).host;
-  const error: CliError = {
+  return {
     code: "sign-in-unavailable",
     message: `Signing in from the command line is not open on ${host} yet. Make an API key on the dashboard at ${platformURL}/dashboard/keys instead.`,
     next: [],
+    problem: problemOf(answer),
   };
-  if (answer) error.problem = problemOf(answer);
-  return error;
 }
 
 function unexpected(message: string, answer?: HttpResult & { answered: true }): CliError {

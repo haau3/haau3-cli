@@ -20,7 +20,10 @@ export interface NextStep {
   description: string;
 }
 
-/** The API's or the platform's own RFC 9457 problem, as it answered. Never a body. */
+/**
+ * The API's or the platform's own RFC 9457 problem, as it answered; for an answer that is not a
+ * problem, only its status and request id. Never a body, and never a member that holds a secret.
+ */
 export interface Problem {
   type: string;
   title: string;

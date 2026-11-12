@@ -22,7 +22,14 @@ export interface HttpRequest {
 
 /** An answer, its body parsed when it is JSON; or no answer at all. */
 export type HttpResult =
-  | { answered: true; status: number; headers: Headers; body: unknown }
+  | {
+      answered: true;
+      status: number;
+      headers: Headers;
+      body: unknown;
+      /** The token the request sent, so that nothing built from the answer repeats it. */
+      bearer?: AccessToken;
+    }
   | { answered: false };
 
 export async function call(url: string, request: HttpRequest = {}): Promise<HttpResult> {
@@ -45,7 +52,7 @@ export async function call(url: string, request: HttpRequest = {}): Promise<Http
       signal: AbortSignal.timeout(Math.max(1, request.timeoutMs ?? TIMEOUT_MS)),
     });
     const text = await readBounded(response);
-    return { answered: true, status: response.status, headers: response.headers, body: parseJson(text) };
+    return { answered: true, status: response.status, headers: response.headers, body: parseJson(text), ...(request.bearer ? { bearer: request.bearer } : {}) };
   } catch {
     // Only that there was no answer: an error's message can carry what the request was holding.
     return { answered: false };
@@ -115,28 +122,43 @@ const REQUEST_ID = /^[\w.:-]{1,100}$/;
 /** A key's marker: a problem's member holding one is not repeated, whatever sent it. */
 const KEY_MARKER = /haau3_sk_/i;
 
-/** A member of the problem fit to print: within its length, nothing unsafe, and no key in it. */
-function member(value: unknown, max: number): string | undefined {
-  const shown = text(value, max);
-  return shown && !KEY_MARKER.test(shown) ? shown : undefined;
+/** How many characters of a secret, running, make a value hold it. */
+const SECRET_RUN = 8;
+
+/**
+ * Whether `value` holds any of `secret`: eight of its characters running, or all of a shorter one.
+ * Only a broken platform would repeat a secret, and then the value is never printed.
+ */
+export function holdsSecret(value: string, secret: string): boolean {
+  if (!secret) return false;
+  if (secret.length <= SECRET_RUN) return value.includes(secret);
+  for (let i = 0; i + SECRET_RUN <= secret.length; i++) if (value.includes(secret.slice(i, i + SECRET_RUN))) return true;
+  return false;
 }
 
 /**
  * The answer's RFC 9457 problem: its type, title, status, code and request id, never its detail. A
  * success or a redirect is not a problem, so only its status and request id are kept, and nothing its
- * body holds is read as a problem's.
+ * body holds is read as a problem's. A member is left out when it holds a key's marker, any of the
+ * token the request sent, or anything else `holds` says it must not repeat.
  */
-export function problemOf(result: { status: number; headers: Headers; body: unknown }): Problem {
+export function problemOf(result: { status: number; headers: Headers; body: unknown; bearer?: AccessToken }, holds: (value: string) => boolean = () => false): Problem {
+  const sent = result.bearer?.reveal();
+  const repeats = (value: string) => KEY_MARKER.test(value) || (sent !== undefined && holdsSecret(value, sent)) || holds(value);
+  const member = (value: unknown, max: number) => {
+    const shown = text(value, max);
+    return shown && !repeats(shown) ? shown : undefined;
+  };
   const body = result.status >= 400 && isRecord(result.body) ? result.body : {};
   const problem: Problem = {
     type: member(body.type, 300) ?? "about:blank",
     title: member(body.title, 120) ?? `HTTP ${result.status}`,
     status: result.status,
   };
-  const code = typeof body.code === "string" && CODE.test(body.code) && !KEY_MARKER.test(body.code) ? body.code : undefined;
+  const code = typeof body.code === "string" && CODE.test(body.code) && !repeats(body.code) ? body.code : undefined;
   if (code) problem.code = code;
   const requestId = result.headers.get("x-request-id");
-  if (requestId && REQUEST_ID.test(requestId) && !KEY_MARKER.test(requestId)) problem.requestId = requestId;
+  if (requestId && REQUEST_ID.test(requestId) && !repeats(requestId)) problem.requestId = requestId;
   return problem;
 }
 
