@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.8](https://github.com/haau3/haau3-cli/compare/v0.1.7...v0.1.8) (2026-11-12)
+
+
+### Bug Fixes
+
+* the Sandbox first with no key, and a README for every command ([#18](https://github.com/haau3/haau3-cli/issues/18)) ([e19382e](https://github.com/haau3/haau3-cli/commit/e19382ea4795bfa573866491747558d04ec0f8dc))
+
 ## [0.1.7](https://github.com/haau3/haau3-cli/compare/v0.1.6...v0.1.7) (2026-11-12)
 
 
