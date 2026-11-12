@@ -18,8 +18,11 @@ export interface Whoami {
 }
 
 export type WhoamiResult =
-  /** `platformNow` is the answer's Date header, so the session's end can be read on this computer's clock. */
-  | { kind: "ok"; whoami: Whoami; platformNow: number | undefined }
+  /**
+   * `platformNow` is the answer's Date header, so the session's end can be read on this computer's
+   * clock. `answer` is the answer's status and request id, for an error built from it later.
+   */
+  | { kind: "ok"; whoami: Whoami; platformNow: number | undefined; answer: Problem }
   /** The session is over: the platform no longer takes the token. */
   | { kind: "ended"; problem: Problem }
   /** The member is not in the organization the session was approved for, or picked none. */
@@ -34,8 +37,12 @@ export async function readWhoami(platformURL: string, token: AccessToken, timeou
   }
   if (answer.status === 200) {
     const whoami = parseWhoami(answer.body);
-    if (whoami) return { kind: "ok", whoami, platformNow: dateOf(answer.headers) };
-    return { kind: "error", error: { code: "unexpected-answer", message: `${host} answered with a description of the session haau3 cannot read.`, next: [{ command: "npx haau3@latest --version", description: "Check for a newer haau3." }] } };
+    // A success's problem is its status and request id only: its body is never read as one.
+    if (whoami) return { kind: "ok", whoami, platformNow: dateOf(answer.headers), answer: problemOf(answer) };
+    return {
+      kind: "error",
+      error: { code: "unexpected-answer", message: `${host} answered with a description of the session haau3 cannot read.`, next: [{ command: "npx haau3@latest --version", description: "Check for a newer haau3." }], problem: problemOf(answer) },
+    };
   }
   const problem = problemOf(answer);
   if (answer.status === 401) return { kind: "ended", problem };

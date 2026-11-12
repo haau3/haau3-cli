@@ -49,10 +49,12 @@ The document:
 - Every field is always present. Exactly one of `data` and `error` is `null`.
 - `environment` is `production` or `sandbox` when the document is about an API key or a call to the
   API, and `null` otherwise.
-- `error.code` is what to branch on, and `error.next` lists commands to run next. When the API's
-  answer is the failure, `error.problem` carries the API's own
+- `error.code` is what to branch on, and `error.next` lists commands to run next. When an answer
+  from the API or the platform is the failure, `error.problem` carries its own
   [problem](https://docs.haau3.com/errors): its `type`, `title`, `status`, `code` when it has one
-  (since 1.1), and `requestId`.
+  (since 1.1), and `requestId`. An answer that is not a problem, such as a success haau3 cannot
+  use, gives only its `status` and `requestId`, with `type` `about:blank` and `title`
+  `HTTP <status>`.
 - When a file has to be added to a `.gitignore` before haau3 will write to it, `error.gitignore`
   names the `.gitignore` (`file`) and the line to add to it (`line`), since 1.2. haau3 never edits a
   `.gitignore` itself.

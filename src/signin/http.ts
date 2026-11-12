@@ -121,9 +121,13 @@ function member(value: unknown, max: number): string | undefined {
   return shown && !KEY_MARKER.test(shown) ? shown : undefined;
 }
 
-/** The answer's RFC 9457 problem: its type, title, status, code and request id, never its detail. */
+/**
+ * The answer's RFC 9457 problem: its type, title, status, code and request id, never its detail. A
+ * success or a redirect is not a problem, so only its status and request id are kept, and nothing its
+ * body holds is read as a problem's.
+ */
 export function problemOf(result: { status: number; headers: Headers; body: unknown }): Problem {
-  const body = isRecord(result.body) ? result.body : {};
+  const body = result.status >= 400 && isRecord(result.body) ? result.body : {};
   const problem: Problem = {
     type: member(body.type, 300) ?? "about:blank",
     title: member(body.title, 120) ?? `HTTP ${result.status}`,

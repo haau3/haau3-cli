@@ -69,6 +69,8 @@ export async function createKey(platformURL: string, token: AccessToken, request
         code: "unexpected-answer",
         message: `${host} answered in a way haau3 cannot use (HTTP ${answer.status}), so nothing was written, and it may have made a key. Revoke any you do not recognise on the keys page at ${platformURL}/dashboard/keys.`,
         next: [{ command: "npx haau3@latest --version", description: "Check for a newer haau3." }],
+        // Its status and request id only: a success's body is never read as a problem.
+        problem: problemOf(answer),
       },
     };
   }
@@ -77,7 +79,7 @@ export async function createKey(platformURL: string, token: AccessToken, request
   if (answer.status === 403 && (problem.code === "not-a-member" || problem.code === "no-organization")) {
     return { kind: "no-organization", code: problem.code, problem };
   }
-  if (answer.status === 404) return { kind: "error", error: { ...signInUnavailable(platformURL), problem } };
+  if (answer.status === 404) return { kind: "error", error: signInUnavailable(platformURL, answer) };
   if (answer.status >= 500) {
     // The platform bounds how long it waits for the database without stopping the write, so an error
     // can come back for a key that was made. Trying again without looking would make a second one.

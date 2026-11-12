@@ -52,25 +52,27 @@ export async function discover(platformURL: string): Promise<DiscoveryResult> {
   const resource = resourceOf(platformURL);
   const platformAnswer = await call(resourceMetadataURL(resource));
   if (!platformAnswer.answered) return fail(platformUnreachable(host));
-  if (platformAnswer.status === 404) return fail(signInUnavailable(platformURL));
+  if (platformAnswer.status === 404) return fail(signInUnavailable(platformURL, platformAnswer));
   if (platformAnswer.status >= 500) return fail(platformUnavailable(host, platformAnswer));
   if (platformAnswer.status !== 200) return fail(unexpected(`${host} answered the request for its sign-in details with HTTP ${platformAnswer.status}.`, platformAnswer));
 
   const metadata = platformAnswer.body;
   if (!isRecord(metadata) || metadata.resource !== resource) {
     // RFC 9728, section 3.3: metadata for another resource is not this one's.
-    return fail(unexpected(`${host}'s sign-in details are not for its command-line endpoints.`));
+    return fail(unexpected(`${host}'s sign-in details are not for its command-line endpoints.`, platformAnswer));
   }
   const servers = metadata.authorization_servers;
   const issuer = Array.isArray(servers) && servers.length >= 1 ? checkIssuer(servers[0]) : undefined;
   const clientId = text(metadata.haau3_client_id, 200);
-  if (!issuer || !clientId) return fail(unexpected(`${host}'s sign-in details name no usable sign-in service.`));
-  if (!issuerAllowed(platformURL, issuer)) return fail(unexpected(`${host} named a sign-in service outside haau3.com.`));
+  if (!issuer || !clientId) return fail(unexpected(`${host}'s sign-in details name no usable sign-in service.`, platformAnswer));
+  if (!issuerAllowed(platformURL, issuer)) return fail(unexpected(`${host} named a sign-in service outside haau3.com.`, platformAnswer));
   const listed = Array.isArray(metadata.scopes_supported) ? metadata.scopes_supported : [];
-  if (!listed.every((s) => typeof s === "string" && SCOPE_TOKEN.test(s))) return fail(unexpected(`${host}'s sign-in details name a scope haau3 cannot ask for.`));
+  if (!listed.every((s) => typeof s === "string" && SCOPE_TOKEN.test(s))) return fail(unexpected(`${host}'s sign-in details name a scope haau3 cannot ask for.`, platformAnswer));
   // Never offline_access: the command line asks for no refresh token, and keeps none it is given.
   const scopes = (listed as string[]).filter((s) => s !== "offline_access");
 
+  // From here the answers are the sign-in service's, whose request id would not be the platform's,
+  // so the errors built from them carry no problem.
   const issuerHost = new URL(issuer).host;
   const serverAnswer = await call(authorizationServerMetadataURL(issuer));
   if (!serverAnswer.answered || serverAnswer.status >= 500) return fail(signInUnreachable(issuerHost));
@@ -161,13 +163,16 @@ export function platformUnavailable(host: string, answer: HttpResult & { answere
   return { code: "platform-unavailable", message: `${host} could not answer just now. ${when}`, next: [], problem: problemOf(answer) };
 }
 
-export function signInUnavailable(platformURL: string): CliError {
+/** The platform's 404 for its command-line endpoints: carries that answer's problem when given it. */
+export function signInUnavailable(platformURL: string, answer?: HttpResult & { answered: true }): CliError {
   const host = new URL(platformURL).host;
-  return {
+  const error: CliError = {
     code: "sign-in-unavailable",
     message: `Signing in from the command line is not open on ${host} yet. Make an API key on the dashboard at ${platformURL}/dashboard/keys instead.`,
     next: [],
   };
+  if (answer) error.problem = problemOf(answer);
+  return error;
 }
 
 function unexpected(message: string, answer?: HttpResult & { answered: true }): CliError {
