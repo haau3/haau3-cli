@@ -309,6 +309,8 @@ export class FakeServer {
           createdVia: "cli",
           secret: newKey(mode),
         };
+        // The platform ends the approval before it makes a key, so from here the token is spent.
+        this.#live = false;
         if (this.keysAnswer === "garbled") return json(201, { id: made.id, secret: made.secret });
         if (this.keysAnswer === "wrong-mode") {
           const other = mode === "live" ? "test" : "live";
