@@ -51,7 +51,7 @@ export const HELP: Help = {
     { name: "--version", description: "Show the version." },
   ],
   environment: [
-    { name: KEY_VARIABLE, description: "The API key, as the SDKs read it: here, else in .env.local, else in .env." },
+    { name: KEY_VARIABLE, description: "The API key: here, else in the project's env files as its loader reads them (.env.local, then .env for Next.js or Vite; .env otherwise)." },
     { name: ENVIRONMENT_VARIABLE, description: "production or sandbox: the environment to call. With sandbox, no key is needed." },
     { name: BASE_URL_VARIABLE, description: "Call the API at another address, such as a stand-in, for development." },
     { name: OUTPUT_VARIABLE, description: "json or text: the output to print, whatever the terminal." },

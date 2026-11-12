@@ -110,7 +110,7 @@ export function keysCreateStep(options: { test?: boolean; replace?: boolean; fil
 export function sandboxStep(platform: NodeJS.Platform): NextStep {
   return {
     command: platform === "win32" ? `$env:HAAU3_ENVIRONMENT = "sandbox"` : `export HAAU3_ENVIRONMENT=sandbox`,
-    description: `Or call the Sandbox with no key: set HAAU3_ENVIRONMENT=sandbox where the app reads its settings, such as its env file.`,
+    description: `Call the Sandbox with no key: set HAAU3_ENVIRONMENT=sandbox where the app reads its settings, such as its env file.`,
   };
 }
 
