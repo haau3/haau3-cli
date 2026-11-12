@@ -5,6 +5,7 @@ import { doctor } from "./commands/doctor.js";
 import { keysCreate } from "./commands/keys.js";
 import { login } from "./commands/login.js";
 import { logout } from "./commands/logout.js";
+import { test } from "./commands/test.js";
 import { whoami } from "./commands/whoami.js";
 import type { Context, Result } from "./commands/context.js";
 import { HELP, helpText } from "./help.js";
@@ -51,7 +52,9 @@ const GLOBAL_OPTIONS = {
 
 interface Command {
   options: ParseArgsOptionsConfig;
-  run(ctx: Context, values: Record<string, unknown>): Promise<Result>;
+  /** How many arguments it takes after its name: none unless it says. */
+  takes?: number;
+  run(ctx: Context, values: Record<string, unknown>, args: string[]): Promise<Result>;
 }
 
 /** A command named by two words, such as `keys create`: the second word picks it. */
@@ -82,6 +85,15 @@ const COMMANDS = new Map<string, Command | Group>([
   ["keys", { sub: KEYS }],
   // --file, not --env-file, for the reason keys create gives.
   ["doctor", { options: { file: { type: "string" } }, run: (ctx, values) => doctor(ctx, { file: stringValue(values.file) }) }],
+  // One argument, the service; --file as doctor's.
+  [
+    "test",
+    {
+      options: { all: { type: "boolean" }, file: { type: "string" } },
+      takes: 1,
+      run: (ctx, values, args) => test(ctx, { service: args[0], all: values.all === true, file: stringValue(values.file) }),
+    },
+  ],
 ]);
 
 /** The options a command or a group takes: a group takes every one its commands do. */
@@ -181,13 +193,16 @@ export async function run(argv: string[], io: Io): Promise<ExitCode> {
       return usage(io, format, { code: "unknown-flag", message: `haau3 ${label} has no flag --${flag}.`, next: [HELP_STEP] }, label);
     }
   }
-  if (positionals.length > label.split(" ").length) {
+  const named = label.split(" ").length;
+  const takes = command.takes ?? 0;
+  if (positionals.length > named + takes) {
     // The extra argument is never repeated back: it may be anything, a key included.
-    return usage(io, format, { code: "unexpected-argument", message: `haau3 ${label} takes no arguments.`, next: [HELP_STEP] }, label);
+    const message = takes === 0 ? `haau3 ${label} takes no arguments.` : `haau3 ${label} takes ${takes === 1 ? "one argument" : `${takes} arguments`}.`;
+    return usage(io, format, { code: "unexpected-argument", message, next: [HELP_STEP] }, label);
   }
 
   const ctx = context(io, format);
-  const result = await command.run(ctx, values);
+  const result = await command.run(ctx, values, positionals.slice(named));
   write(io, format, result.document, result.text);
   return result.exit;
 }

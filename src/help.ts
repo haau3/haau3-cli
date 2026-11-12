@@ -26,6 +26,12 @@ export const HELP: Help = {
       description: "Check that this project is ready to call the API: Node, the SDK, the key and where it is, git ignoring its file, and a call that proves the key works.",
     },
     { name: "doctor --file <file>", description: "Read this env file in place of .env.local and .env." },
+    {
+      name: "test [service]",
+      description: "One call to each service, or to the one named, built from the API's published spec. Says what kind of answer came back; never prints one.",
+    },
+    { name: "test <service> --all", description: "Every operation of the service. Each call counts as a request." },
+    { name: "test --file <file>", description: "Read this env file in place of .env.local and .env." },
     { name: "login", description: "Sign in: a person approves this computer in the browser. With no terminal, it prints the page and the code, then exits." },
     { name: "login --complete", description: "Wait for that approval, then finish signing in." },
     { name: "whoami", description: "Who is signed in, the organization, its plan and this month's use." },
