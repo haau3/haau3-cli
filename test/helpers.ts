@@ -16,7 +16,7 @@ export interface Captured {
   stderr: string;
 }
 
-export type Extra = Partial<Pick<Io, "stdin" | "now" | "sleep" | "store" | "enter" | "openBrowser">>;
+export type Extra = Partial<Pick<Io, "stdin" | "now" | "sleep" | "store" | "enter" | "openBrowser" | "fetch">>;
 
 export async function runCli(
   args: string[],

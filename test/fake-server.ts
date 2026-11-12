@@ -1,6 +1,7 @@
 // A stand-in for the platform and its sign-in service on one local port: the platform's
 // protected-resource metadata, whoami and keys, and an authorization server under /issuer with its own
-// metadata, device authorization, token and revocation endpoints. Each answer is scripted per test,
+// metadata, device authorization, token and revocation endpoints. For doctor, the API's /health and
+// its FHIR base's metadata answer here too, when HAAU3_BASE_URL names this server. Each answer is scripted per test,
 // and every request is recorded. The tokens and the device code it hands out are planted markers, so
 // the secrets test can look for them in everything the command line prints and keeps.
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
@@ -94,8 +95,12 @@ export const WHOAMI = {
   usage: { count: 312, allowance: 1000, headline: "312 of 1,000 requests this month" },
 };
 
+/** What the API's metadata answers, for doctor: `echo` repeats what it was sent, as a broken server might. */
+export type ApiAnswer = "ok" | "unauthorized" | "rate-limited" | "unavailable" | "echo";
+
 export class FakeServer {
   url = "";
+  apiAnswer: ApiAnswer = "ok";
   requests: Recorded[] = [];
   revoked: string[] = [];
 
@@ -312,6 +317,23 @@ export class FakeServer {
         if (this.keysAnswer === "long-prefix") return json(201, { ...made, keyPrefix: made.secret.slice(0, -1) });
         if (this.keysAnswer === "ok-200") return json(200, made);
         return json(201, made, { "Cache-Control": "no-store" });
+      }
+      case "/health":
+        return json(200, { status: "ok" });
+      case "/v1/fhir/r4/metadata": {
+        const fhir = (status: number, value: unknown, headers: Record<string, string> = {}) => {
+          res.writeHead(status, { "Content-Type": "application/fhir+json; fhirVersion=4.0", ...requestId, ...headers });
+          res.end(JSON.stringify(value));
+        };
+        const outcome = (code: string, diagnostics: string) => ({ resourceType: "OperationOutcome", issue: [{ severity: "error", code, diagnostics }] });
+        if (this.apiAnswer === "unauthorized") return fhir(401, outcome("security", "The key was not accepted."));
+        if (this.apiAnswer === "rate-limited") return fhir(429, outcome("throttled", "Slow down."), { "Retry-After": "30" });
+        if (this.apiAnswer === "unavailable") return fhir(503, outcome("transient", "Starting."));
+        if (this.apiAnswer === "echo") {
+          const sent = String(req.headers.authorization ?? "");
+          return fhir(401, outcome("security", `You sent ${sent}`), { "X-Request-Id": sent.replace(/^Bearer /, "") || "none" });
+        }
+        return fhir(200, { resourceType: "CapabilityStatement", status: "active" });
       }
       default:
         return problem(404, "not-found");

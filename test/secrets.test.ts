@@ -14,6 +14,7 @@ import { findKey } from "../src/key.js";
 import { AccessToken, DeviceCode } from "../src/signin/secret.js";
 import {
   ACCESS_TOKEN,
+  type ApiAnswer,
   DEVICE_CODE,
   FakeServer,
   NEW_KEY_CORE,
@@ -85,11 +86,18 @@ const COMMANDS: [string, string[]][] = [
   ["the key after a flag's value took the command's word", ["--name", "keys", IN_ENVIRONMENT]],
   ["the key after --file took the command's word", ["--file", "keys", IN_ENVIRONMENT, "create"]],
   ["the key as Node's own --env-file", ["keys", "create", `--env-file=${IN_ENVIRONMENT}`]],
+  ["doctor", ["doctor"]],
+  ["doctor --file", ["doctor", "--file", ".env"]],
+  ["the key after doctor", ["doctor", IN_ENVIRONMENT]],
+  ["the key as doctor's --file", ["doctor", "--file", IN_ENVIRONMENT]],
+  ["the key as doctor's env file's name", ["doctor", "--file", `.env${IN_ENVIRONMENT}`]],
 ];
 
 let project: string;
 beforeAll(() => {
   project = mkdtempSync(join(tmpdir(), "cli-secrets-"));
+  // A Next.js project, whose loader reads .env.local over .env, so both planted files are read.
+  writeFileSync(join(project, "package.json"), JSON.stringify({ dependencies: { next: "16.0.0" } }));
   writeFileSync(join(project, ".env.local"), `NEIGHBOUR_TOKEN=${NEIGHBOUR}\nHAAU3_API_KEY=${IN_ENV_LOCAL}\n`);
   writeFileSync(join(project, ".env"), `HAAU3_API_KEY=${IN_ENV}\nNEIGHBOUR_TOKEN=${NEIGHBOUR}\n`);
 });
@@ -148,7 +156,8 @@ describe("no command prints a planted secret", () => {
     it(`${label}, at a terminal and not, as text and as JSON`, async () => {
       for (const tty of [true, false]) {
         for (const output of ["", "json", "text"]) {
-          const env = { HAAU3_API_KEY: IN_ENVIRONMENT, NEIGHBOUR_TOKEN: NEIGHBOUR, HAAU3_OUTPUT: output, HAAU3_PLATFORM_URL: server.url };
+          // doctor calls the API: here, the stand-in, which is the only place a key may go.
+          const env = { HAAU3_API_KEY: IN_ENVIRONMENT, NEIGHBOUR_TOKEN: NEIGHBOUR, HAAU3_OUTPUT: output, HAAU3_PLATFORM_URL: server.url, HAAU3_BASE_URL: server.url };
           const out = await runCli(args, { tty, env, cwd: project, io: { store: testStore(dir, memoryKeyring()), ...fakeClock() } });
           assertClean(out.stdout, "stdout");
           assertClean(out.stderr, "stderr");
@@ -329,6 +338,65 @@ describe("a new key is written to the env file and nowhere else", () => {
     } finally {
       rmSync(keys, { recursive: true, force: true });
     }
+  });
+});
+
+/** Planted under other names, where doctor looks for a near-miss: their values and names are never printed. */
+const NEAR_VALUE = ["haau3", "sk", "test", `${CORE}near`].join("_");
+const NEAR_NAME = ["haau3", "sk", "live", `${CORE}name`].join("_");
+
+describe("doctor never prints a key, a near-miss's value or name, or what the API sent back", () => {
+  const answers: ApiAnswer[] = ["ok", "unauthorized", "rate-limited", "unavailable", "echo"];
+  let near: string;
+  beforeEach(() => {
+    near = mkdtempSync(join(tmpdir(), "cli-secrets-doctor-"));
+    writeFileSync(join(near, ".env.local"), `HAAU3_TEST_API_KEY=${NEAR_VALUE}\nMY_TOKEN=${NEAR_VALUE}\n${NEAR_NAME}=1\nNEIGHBOUR_TOKEN=${NEIGHBOUR}\n`);
+    writeFileSync(join(near, ".env"), `HAAU3_API_KEY=${IN_ENV}\n`);
+  });
+  afterEach(() => rmSync(near, { recursive: true, force: true }));
+
+  for (const answer of answers) {
+    it(`when the API answers ${answer}, at a terminal and not, as text and as JSON`, async () => {
+      server.apiAnswer = answer;
+      for (const tty of [true, false]) {
+        for (const output of ["", "json", "text"]) {
+          for (const env of [
+            { HAAU3_BASE_URL: server.url },
+            { HAAU3_BASE_URL: server.url, HAAU3_API_KEY: IN_ENVIRONMENT },
+            { HAAU3_BASE_URL: server.url, HAAU3_ENVIRONMENT: "sandbox", HAAU3_API_KEY: IN_ENV_LOCAL },
+            { HAAU3_BASE_URL: `${server.url}/${IN_ENVIRONMENT}` },
+            { HAAU3_BASE_URL: server.url.replace("http://127.0.0.1", `http://u:${IN_ENVIRONMENT}@127.0.0.1`) },
+          ]) {
+            const before = server.requests.length;
+            const out = await runCli(["doctor"], {
+              tty,
+              env: { HAAU3_OUTPUT: output, HAAU3_PLATFORM_URL: server.url, NEIGHBOUR_TOKEN: NEIGHBOUR, OTHER_KEY: NEAR_VALUE, ...env },
+              cwd: near,
+              io: { store: testStore(dir, memoryKeyring()), ...fakeClock() },
+            });
+            assertClean(out.stdout, "stdout");
+            assertClean(out.stderr, "stderr");
+            // A base URL that holds a key is never called, so the key goes nowhere.
+            if (env.HAAU3_BASE_URL !== server.url) expect(server.requests.length).toBe(before);
+          }
+        }
+      }
+      // Nothing doctor sent carried a near-miss's value: only HAAU3_API_KEY is ever sent.
+      expect(JSON.stringify(server.requests.map((r) => r.headers))).not.toContain(`${CORE}near`);
+    });
+  }
+
+  it("as a real process, whose stdout is a pipe", async () => {
+    server.apiAnswer = "echo";
+    const env = { HAAU3_BASE_URL: server.url, HAAU3_PLATFORM_URL: server.url, HAAU3_SESSION_STORE: "file", HAAU3_CONFIG_DIR: dir, OTHER_KEY: NEAR_VALUE };
+    for (const args of [["doctor"], ["doctor", "--file", ".env.local"]]) {
+      const out = await spawnCliAsync(args, { cwd: near, env });
+      expect(out.stdout.startsWith("{"), args.join(" ")).toBe(true);
+      expect(out.code).toBe(1);
+      assertClean(out.stdout, `stdout of ${args.join(" ")}`);
+      assertClean(out.stderr, `stderr of ${args.join(" ")}`);
+    }
+    expect(server.to("/v1/fhir/r4/metadata").length).toBeGreaterThan(0);
   });
 });
 

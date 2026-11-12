@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { environmentOf, findKey, KEY_FILES, modeOf, notNeeded } from "../src/key.js";
+import { environmentOf, findKey, modeOf, notNeeded } from "../src/key.js";
 
 const LIVE = ["haau3", "sk", "live", "a1b2c3d4e5f6"].join("_");
 const TEST = ["haau3", "sk", "test", "f6e5d4c3b2a1"].join("_");
@@ -12,6 +12,8 @@ const OTHER_LIVE = ["haau3", "sk", "live", "zzzzzzzzzzzz"].join("_");
 let project: string;
 beforeEach(() => {
   project = mkdtempSync(join(tmpdir(), "cli-key-"));
+  // A Next.js project, whose loader reads .env.local over .env.
+  writeFileSync(join(project, "package.json"), JSON.stringify({ dependencies: { next: "16.0.0" } }));
 });
 afterEach(() => {
   rmSync(project, { recursive: true, force: true });
@@ -35,22 +37,36 @@ describe("where the key is found", () => {
     expect(key?.reveal()).toBe(LIVE);
   });
 
+  it("reads .env alone in a project whose loader reads only .env (owner, 2026-11-12)", () => {
+    rmSync(join(project, "package.json"));
+    file(".env.local", `HAAU3_API_KEY=${LIVE}\n`);
+    file(".env", `HAAU3_API_KEY=${OTHER_LIVE}\n`);
+    expect(findKey({ cwd: project, env: {} }).report).toMatchObject({ status: "found", source: ".env" });
+    rmSync(join(project, ".env"));
+    expect(findKey({ cwd: project, env: {} }).report).toEqual({ status: "not-found", looked: ["environment", ".env"] });
+  });
+
   it("then .env", () => {
     file(".env", `HAAU3_API_KEY=${LIVE}\n`);
     expect(findKey({ cwd: project, env: {} }).report).toMatchObject({ status: "found", source: ".env" });
   });
 
-  it("passes over an empty or blank value, as an application finds no key there", () => {
+  it("stops where the variable is first defined, even to nothing, as applications' loaders do", () => {
+    // Node's --env-file and loadEnvFile(), Next.js and dotenv leave a variable already set, even empty.
     file(".env.local", "HAAU3_API_KEY=\n");
     file(".env", `HAAU3_API_KEY=${LIVE}\n`);
-    expect(findKey({ cwd: project, env: { HAAU3_API_KEY: "  " } }).report).toMatchObject({ source: ".env" });
+    expect(findKey({ cwd: project, env: {} }).report.status).toBe("not-found");
+    expect(findKey({ cwd: project, env: { HAAU3_API_KEY: "  " } }).report.status).toBe("not-found");
+    file(".env.local", "OTHER=1\n");
+    expect(findKey({ cwd: project, env: {} }).report).toMatchObject({ status: "found", source: ".env" });
   });
 
   it("reads only the folder it runs in", () => {
     const sub = join(project, "sub");
     mkdirSync(sub);
     file(".env", `HAAU3_API_KEY=${LIVE}\n`);
-    expect(findKey({ cwd: sub, env: {} }).report).toEqual({ status: "not-found", looked: ["environment", ...KEY_FILES] });
+    // The subfolder has no package.json of its own, so its loader is read as one that reads .env alone.
+    expect(findKey({ cwd: sub, env: {} }).report).toEqual({ status: "not-found", looked: ["environment", ".env"] });
   });
 
   it("says where it looked when there is no key", () => {

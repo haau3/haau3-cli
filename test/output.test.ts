@@ -4,15 +4,15 @@ import { AGENT_MARKERS, agentDetected, askedFormat, chooseFormat, CODEX_MARKERS,
 import { VERSION } from "../src/version.js";
 
 describe("the document", () => {
-  it("is version 1.2 of its shape", () => {
-    expect(FORMAT_VERSION).toBe("1.2");
+  it("is version 1.3 of its shape", () => {
+    expect(FORMAT_VERSION).toBe("1.3");
   });
 
   it("carries every field, in one order, on success", () => {
     const document = success("version", { version: VERSION }, "sandbox");
     expect(Object.keys(document)).toEqual(["formatVersion", "cli", "cliVersion", "command", "ok", "environment", "data", "error"]);
     expect(document).toEqual({
-      formatVersion: "1.2",
+      formatVersion: "1.3",
       cli: "haau3",
       cliVersion: VERSION,
       command: "version",

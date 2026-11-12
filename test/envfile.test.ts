@@ -107,11 +107,20 @@ describe("choosing the file", () => {
     expect(choose()).toMatchObject({ shown: ".env" });
   });
 
-  it("takes the file the project has, .env.local first", () => {
+  it("takes the file the project has, .env.local first in a Next.js or Vite project and .env alone in any other", () => {
     writeFileSync(join(project, ".env"), "A=1\n");
     expect(choose()).toMatchObject({ shown: ".env", reason: "existing" });
     writeFileSync(join(project, ".env.local"), "B=1\n");
+    expect(choose()).toMatchObject({ shown: ".env", reason: "existing" });
+    writeFileSync(join(project, "package.json"), JSON.stringify({ devDependencies: { vite: "8.0.0" } }));
     expect(choose()).toMatchObject({ shown: ".env.local", reason: "existing" });
+  });
+
+  it("takes the first file that defines the key, even empty, which is the one the loader reads", () => {
+    writeFileSync(join(project, "package.json"), JSON.stringify({ dependencies: { next: "16.0.0" } }));
+    writeFileSync(join(project, ".env.local"), "HAAU3_API_KEY=\n");
+    writeFileSync(join(project, ".env"), `HAAU3_API_KEY=${OLD}\n`);
+    expect(choose()).toMatchObject({ shown: ".env.local", reason: "holds-key" });
   });
 
   it("takes the file that holds the key, whichever it is", () => {

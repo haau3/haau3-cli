@@ -21,8 +21,8 @@ describe("the package", () => {
     expect(pkg.engines).toEqual({ node: ">=22" });
   });
 
-  it("has one runtime dependency, the credential store's, pinned exactly", () => {
-    expect(pkg.dependencies).toEqual({ "@napi-rs/keyring": "2.1.2" });
+  it("has two runtime dependencies, the SDK and the credential store's package, each pinned exactly", () => {
+    expect(pkg.dependencies).toEqual({ "@haau3/sdk": "0.4.1", "@napi-rs/keyring": "2.1.2" });
     expect(pkg.optionalDependencies).toBeUndefined();
     expect(pkg.peerDependencies).toBeUndefined();
   });

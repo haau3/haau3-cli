@@ -68,6 +68,24 @@ const whoami = haau3(["whoami"], { HAAU3_SESSION_STORE: "file", HAAU3_CONFIG_DIR
 const signedOut = parse(whoami.stdout);
 expect(whoami.status === 1 && signedOut?.error?.code === "not-signed-in", `whoami printed ${JSON.stringify(whoami.stdout.slice(0, 160))}, exit ${whoami.status}`);
 
+// doctor from the install: its SDK must load from the install's own node_modules. A made-up key and an
+// address nobody serves, so nothing is sent off this computer and no contributor's session is read.
+const fakeKey = ["haau3", "sk", "live", "CHECKBIN".padEnd(43, "x")].join("_");
+const doctor = haau3(["doctor", "--json"], {
+  HAAU3_API_KEY: fakeKey,
+  HAAU3_BASE_URL: "http://127.0.0.1:59999",
+  HAAU3_SESSION_STORE: "file",
+  HAAU3_CONFIG_DIR: join(work, "config"),
+  HAAU3_PLATFORM_URL: "http://127.0.0.1:59999",
+});
+const report = parse(doctor.stdout);
+const reached = report?.data?.checks?.find((c: { name: string }) => c.name === "reachable");
+expect(
+  doctor.status === 1 && report?.formatVersion === FORMAT_VERSION && report?.error?.code === "not-ready" && report?.data?.checks?.length === 9 && reached?.status === "fail",
+  `doctor printed ${JSON.stringify(doctor.stdout.slice(0, 200))}, exit ${doctor.status}`,
+);
+expect(!doctor.stdout.includes("CHECKBIN") && !doctor.stderr.includes("CHECKBIN"), "doctor printed the key");
+
 // A store that cannot load falls back to the file without a word, so the check above cannot tell.
 // Load it as the installed command line would, from its own folder: this system's prebuilt package
 // has to be there and has to load.
