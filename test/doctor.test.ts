@@ -192,7 +192,7 @@ describe("a project that is ready", () => {
     expect(checks.key.message).toContain("HAAU3_ENVIRONMENT in .env names the Sandbox");
     expect(checks["env-file-ignored"]).toMatchObject({ status: "skip", message: "No key is used, so no file holds one." });
     expect(checks.settings.message).toBe("The SDK calls the Sandbox at https://sandbox.haau3.com: HAAU3_ENVIRONMENT in .env names it.");
-    expect(checks["key-works"].message).toMatch(/^the Sandbox answered with no key, in \d+ ms\.$/);
+    expect(checks["key-works"].message).toMatch(/^The Sandbox answered with no key, in \d+ ms\.$/);
     expect(stand.sent.map((s) => s.url.origin)).toEqual([SANDBOX, SANDBOX]);
     expect(stand.sent.every((s) => !s.headers.has("authorization"))).toBe(true);
     // Without a key, signing in is the way to one, so signed out is a warning.
