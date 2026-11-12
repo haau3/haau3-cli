@@ -903,7 +903,8 @@ describe("paths and steps", () => {
   it("a --file outside the folder is printed as it was given, never with the folders above it", async () => {
     const parent = mkdtempSync(join(tmpdir(), "cli-doctor-parent-"));
     try {
-      const odd = join(parent, process.platform === "win32" ? "odd folder" : "odd\u001b[2Jfolder");
+      // A name that is not plain path text: a terminal escape where the disk allows one, else a #.
+      const odd = join(parent, process.platform === "win32" ? "odd#folder" : "odd\u001b[2Jfolder");
       mkdirSync(join(odd, "app"), { recursive: true });
       writeFileSync(join(odd, "outside.env"), `HAAU3_API_KEY=${LIVE}\n`);
       const out = await runCli(["doctor", "--file", "../outside.env"], {
