@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.7](https://github.com/haau3/haau3-cli/compare/v0.1.6...v0.1.7) (2026-11-12)
+
+
+### Features
+
+* keys create ends the sign-in ([#16](https://github.com/haau3/haau3-cli/issues/16)) ([2162c23](https://github.com/haau3/haau3-cli/commit/2162c239cb574c67c1c57c9c6bc81f7580519653))
+
 ## [0.1.6](https://github.com/haau3/haau3-cli/compare/v0.1.5...v0.1.6) (2026-11-12)
 
 
