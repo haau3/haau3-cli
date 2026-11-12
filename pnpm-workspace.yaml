@@ -4,6 +4,11 @@
 # old.
 minimumReleaseAge: 4320
 
+# haau3's own SDK installs the day it is released while the platform's API is in preview, as in the
+# platform's other repositories; its own dependencies keep the wait. Removed at general availability.
+minimumReleaseAgeExclude:
+  - "@haau3/sdk"
+
 # Keeps pnpm-lock.yaml one YAML document, which GitHub's dependency graph needs to see the tree
 # (dependabot/dependabot-core#15904).
 pmOnFail: ignore

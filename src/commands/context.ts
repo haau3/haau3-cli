@@ -19,6 +19,8 @@ export interface Context {
   enter?: () => { pressed: Promise<void>; stop(): void };
   /** Opens a page in the browser. False when it could not. */
   openBrowser?: (url: string) => Promise<boolean>;
+  /** The fetch the API's client sends with. The global one by default; tests give a stand-in. */
+  fetch?: typeof fetch;
 }
 
 export interface Result {
@@ -78,6 +80,30 @@ export const KEYS_CREATE_STEP: NextStep = {
   command: "npx haau3 keys create",
   description: "Make an API key and write it to this project's env file, never showing it. Add --test for a test key.",
 };
+/**
+ * A path as a shell takes it, to put in a command someone, or an agent, will run: as it is when it
+ * holds only characters no shell reads, else in single quotes, inside which neither a POSIX shell nor
+ * PowerShell expands anything. A quote inside is closed and reopened as each shell spells it.
+ */
+export function arg(path: string, platform: NodeJS.Platform = process.platform): string {
+  // A POSIX shell reads a backslash and a leading ~; on Windows a backslash separates folders.
+  const plain = platform === "win32" ? /^[A-Za-z0-9._/\\:@+~-]+$/ : /^[A-Za-z0-9._/:@+-][A-Za-z0-9._/:@+~-]*$/;
+  if (plain.test(path)) return path;
+  return platform === "win32" ? `'${path.replaceAll("'", "''")}'` : `'${path.replaceAll("'", `'\\''`)}'`;
+}
+
+/** `--file` with its value, as one word when the value starts with a dash, which would read as a flag. */
+export function fileFlag(file: string): string {
+  return file.startsWith("-") ? `--file=${arg(file)}` : `--file ${arg(file)}`;
+}
+
+/** `doctor`, with the env file it should read when it is not one of the defaults. */
+export function doctorStep(file?: string): NextStep {
+  return {
+    command: file === undefined ? "npx haau3 doctor" : `npx haau3 doctor ${fileFlag(file)}`,
+    description: "Check that this project is ready to call the API: the key, its environment, and a call that proves it works.",
+  };
+}
 export const LOGOUT_STEP: NextStep = { command: "npx haau3 logout", description: "Sign out, then sign in again to pick another organization." };
 
 /** Neither store would keep the session. */

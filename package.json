@@ -54,6 +54,7 @@
     "yaml": "^2.9.1"
   },
   "dependencies": {
+    "@haau3/sdk": "0.4.1",
     "@napi-rs/keyring": "2.1.2"
   }
 }
