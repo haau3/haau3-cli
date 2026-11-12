@@ -299,10 +299,8 @@ describe("a new key is written to the env file and nowhere else", () => {
               };
               await run(["login"]);
               await run(["login", "--complete"]);
+              // Refused before the platform is asked (.env holds a key already), so the session is kept.
               await run(["keys", "create"]);
-              // Making a key ends the sign-in, so the next key needs a sign-in of its own.
-              await run(["login"]);
-              await run(["login", "--complete"]);
               server.keysAnswer = answer;
               await run(["keys", "create", "--replace"]);
               server.keysAnswer = "created";
@@ -321,10 +319,11 @@ describe("a new key is written to the env file and nowhere else", () => {
                 expect(holding(newKey("live"))).toEqual([]);
                 expect(readFileSync(join(keys, ".env"), "utf8")).toBe(`NEIGHBOUR_TOKEN=${NEIGHBOUR}\r\nHAAU3_API_KEY=${IN_ENV}\r\n`);
               }
-              // A session the platform refused, or one that made a key (any success, used or not), is
-              // ended, so the test key that follows is never made.
-              const madeAKey = ["created", "garbled", "wrong-mode", "bad-secret", "key-in-id", "key-in-name", "long-prefix", "ok-200"].includes(answer);
-              const ended = madeAKey || answer === "unauthorized" || answer === "not-a-member";
+              // Every answer to the --replace ends the session, so the test key that follows is never
+              // made, except a 400 or a 404, which spend nothing. The rest refuse the session (401,
+              // 403) or made or may have made a key (any success, used or not, a failure, no answer).
+              const kept = answer === "key-in-problem" || answer === "off";
+              const ended = !kept;
               expect(holding(newKey("test"))).toEqual(ended ? [] : [join(keys, "sandbox.env")]);
             } finally {
               rmSync(keys, { recursive: true, force: true });
