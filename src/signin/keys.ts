@@ -32,8 +32,11 @@ export type CreateResult =
   | { kind: "ended"; problem: Problem }
   /** The member is not in the session's organization, or picked none. */
   | { kind: "no-organization"; code: "not-a-member" | "no-organization"; problem: Problem }
-  /** A key may exist: the platform made one and its answer could not be used, or no answer came. */
-  | { kind: "unknown"; made: MadeKey | null; error: CliError }
+  /**
+   * A key may exist: the platform made one and its answer could not be used, or no answer came.
+   * `signInEnded` when the platform answered with a success: it ends the sign-in before it makes a key.
+   */
+  | { kind: "unknown"; made: MadeKey | null; error: CliError; signInEnded: boolean }
   | { kind: "error"; error: CliError };
 
 /** The characters a key is made of, after its mode's prefix. */
@@ -49,6 +52,7 @@ export async function createKey(platformURL: string, token: AccessToken, request
     return {
       kind: "unknown",
       made: null,
+      signInEnded: false,
       error: {
         code: "platform-unreachable",
         message: `${host} did not answer. A key may have been made without reaching this computer: look on the keys page at ${platformURL}/dashboard/keys, and revoke any you do not recognise.`,
@@ -65,6 +69,7 @@ export async function createKey(platformURL: string, token: AccessToken, request
     return {
       kind: "unknown",
       made: madeKey(answer.body),
+      signInEnded: true,
       error: {
         code: "unexpected-answer",
         message: `${host} answered in a way haau3 cannot use (HTTP ${answer.status}), so nothing was written, and it may have made a key. Revoke any you do not recognise on the keys page at ${platformURL}/dashboard/keys.`,
@@ -87,6 +92,8 @@ export async function createKey(platformURL: string, token: AccessToken, request
     return {
       kind: "unknown",
       made: null,
+      // The platform may have ended the sign-in before failing; if it did, the next command finds out.
+      signInEnded: false,
       error: { ...unavailable, message: `${unavailable.message} It may have made a key anyway: look on the keys page at ${platformURL}/dashboard/keys before trying again, and revoke any you do not recognise.` },
     };
   }

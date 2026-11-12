@@ -5,6 +5,11 @@
 // Everything that needs no one else is checked first: the file, what it holds, that the edit reads
 // back right and that git ignores it. Only then is the platform asked, because a haau3 key is kept
 // only as a hash and cannot be read back: a key made and then not written is a key nobody holds.
+//
+// Making a key ends the sign-in. The platform ends the approval before it makes the key, so a
+// sign-in someone else approved can never make more than the keys of that one moment. Once the key is
+// made, this computer's session is ended too, written or not: revoked from here as well, in case the
+// platform was one that did not, then deleted.
 import { basename, dirname, join, resolve } from "node:path";
 import { chooseFile, inspectFile, planFor, shownPath, standIn, writeKey, type Target } from "../envfile.js";
 import { resolvePlatform } from "../environment.js";
@@ -219,16 +224,26 @@ export async function keysCreate(ctx: Context, options: KeysCreateOptions): Prom
     return fail(organizationError(created.code, created.problem, session.organization.name));
   }
   if (created.kind === "error") return fail(created.error);
-  if (created.kind === "unknown") return fail({ ...created.error, message: `${created.error.message}${madeText(created.made)}` });
+  if (created.kind === "unknown") {
+    // A success the command line cannot use still made a key, and so ended the sign-in.
+    if (!created.signInEnded) return fail({ ...created.error, message: `${created.error.message}${madeText(created.made)}` });
+    await endHere();
+    return fail({
+      ...created.error,
+      message: `${created.error.message}${madeText(created.made)} Making a key ended the sign-in, so sign in again before trying again.`,
+      next: [LOGIN_STEP, ...created.error.next],
+    });
+  }
   const key = created.key;
 
-  // The write.
+  // The write, then the end of the sign-in, whichever way the write went.
   const written = writeKey(target, key.secret, options.replace);
+  await endHere();
   if (!written.ok) {
     return fail({
       code: "write-failed",
-      message: `The key was made, but ${target.shown} could not be written: ${written.reason}. The key is in no file. Revoke it on the keys page at ${keysPage}: ${key.name}, starting ${key.prefix}, id ${key.id}.`,
-      next: [again(options, target)],
+      message: `The key was made, but ${target.shown} could not be written: ${written.reason}. The key is in no file. Revoke it on the keys page at ${keysPage}: ${key.name}, starting ${key.prefix}, id ${key.id}. Making a key ended the sign-in, so sign in again before trying again.`,
+      next: [LOGIN_STEP, again(options, target)],
     });
   }
 
@@ -275,6 +290,7 @@ export async function keysCreate(ctx: Context, options: KeysCreateOptions): Prom
     `  Prefix: ${key.prefix}`,
     `  Id:     ${key.id}`,
     mode === "live" ? "It reaches every production service." : "A test key reaches the Sandbox only.",
+    "Making a key ends the sign-in, so sign in again before making another.",
   ];
   if (replaced) {
     const old = replaced.prefix ? `The key it replaced, starting ${replaced.prefix},` : "The key it replaced";

@@ -38,7 +38,7 @@ export const HELP: Help = {
     { name: "logout", description: "Sign out, and end the approval." },
     {
       name: "keys create",
-      description: "Make a live API key for the signed-in organization and write it to the project's env file as HAAU3_API_KEY. The key is never shown.",
+      description: "Make a live API key for the signed-in organization and write it to the project's env file as HAAU3_API_KEY. The key is never shown. Making a key ends the sign-in.",
     },
     { name: "keys create --test", description: "Make a test key instead, which reaches the Sandbox only." },
     { name: "keys create --name <name>", description: "Name the key. By default the name says haau3 made it, for which folder and on which day." },
