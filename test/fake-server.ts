@@ -41,6 +41,11 @@ function leaks(secret: string): string[] {
 }
 export const NEW_KEY_MARKERS = [NEW_KEY_CORE, ...leaks(newKey("live")), ...leaks(newKey("test"))];
 
+/** The request id on every answer from the platform, successes included, as the platform sends one. */
+export const PLATFORM_REQUEST_ID = "req_fake_1";
+/** The request id on every answer from the sign-in service: never the platform's, so never kept. */
+export const SIGN_IN_SERVICE_REQUEST_ID = "req_signin_1";
+
 export type KeysAnswer =
   | "created"
   | "unauthorized"
@@ -72,7 +77,7 @@ export type TokenAnswer =
   | "not-bearer"
   | "rate-limited"
   | "pending-as-200";
-export type WhoamiAnswer = "ok" | "unauthorized" | "not-a-member" | "no-organization" | "unavailable" | "garbled";
+export type WhoamiAnswer = "ok" | "unauthorized" | "not-a-member" | "no-organization" | "unavailable" | "garbled" | "refused";
 
 export interface Recorded {
   method: string;
@@ -95,10 +100,12 @@ export class FakeServer {
   revoked: string[] = [];
 
   /** The platform's metadata: off answers 404, as a platform with sign-in from the command line off. */
-  platformMetadata: "ok" | "off" | "server-error" | "other-resource" | "no-client-id" = "ok";
+  platformMetadata: "ok" | "off" | "server-error" | "refused" | "other-resource" | "no-client-id" = "ok";
   /** The issuer's metadata. */
-  issuerMetadata: "ok" | "other-issuer" | "foreign-endpoint" | "no-device-grant" | "missing" = "ok";
-  deviceAnswer: "ok" | "invalid_client" | "bad-code" = "ok";
+  issuerMetadata: "ok" | "other-issuer" | "foreign-endpoint" | "no-device-grant" | "missing" | "server-error" = "ok";
+  deviceAnswer: "ok" | "invalid_client" | "bad-code" | "server-error" = "ok";
+  /** The request id on the platform's answers: a broken platform's may hold a secret. */
+  platformRequestId = PLATFORM_REQUEST_ID;
   /** One per poll, in order; the last one repeats. */
   tokenAnswers: TokenAnswer[] = ["approved"];
   whoamiAnswer: WhoamiAnswer = "ok";
@@ -155,17 +162,20 @@ export class FakeServer {
     const path = new URL(req.url ?? "/", this.url).pathname;
     this.requests.push({ method: req.method ?? "", path, headers: req.headers, body });
     const form = new URLSearchParams(body);
+    const fromSignInService = path.startsWith("/issuer/") || path.startsWith("/.well-known/oauth-authorization-server/");
+    const requestId = { "X-Request-Id": fromSignInService ? SIGN_IN_SERVICE_REQUEST_ID : this.platformRequestId };
     const json = (status: number, value: unknown, headers: Record<string, string> = {}) => {
-      res.writeHead(status, { "Content-Type": "application/json", ...headers });
+      res.writeHead(status, { "Content-Type": "application/json", ...requestId, ...headers });
       res.end(JSON.stringify(value));
     };
     const problem = (status: number, code: string, headers: Record<string, string> = {}) =>
-      json(status, { type: "about:blank", title: "Refused", status, detail: "Not today.", code }, { "X-Request-Id": "req_fake_1", ...headers });
+      json(status, { type: "about:blank", title: "Refused", status, detail: "Not today.", code }, headers);
 
     switch (path) {
       case "/.well-known/oauth-protected-resource/api/cli/v1": {
         if (this.platformMetadata === "off") return problem(404, "not-found");
         if (this.platformMetadata === "server-error") return problem(503, "unavailable", { "Retry-After": "30" });
+        if (this.platformMetadata === "refused") return problem(403, "forbidden");
         return json(200, {
           resource: this.platformMetadata === "other-resource" ? `${this.url}/api/other` : `${this.url}/api/cli/v1`,
           authorization_servers: [this.issuer],
@@ -177,6 +187,7 @@ export class FakeServer {
       }
       case "/.well-known/oauth-authorization-server/issuer": {
         if (this.issuerMetadata === "missing") return problem(404, "not-found");
+        if (this.issuerMetadata === "server-error") return problem(503, "unavailable");
         const foreign = this.url.replace("127.0.0.1", "localhost");
         return json(200, {
           issuer: this.issuerMetadata === "other-issuer" ? `${this.url}/someone-else` : this.issuer,
@@ -188,6 +199,7 @@ export class FakeServer {
       }
       case "/issuer/device": {
         if (this.deviceAnswer === "invalid_client") return json(401, { error: "invalid_client" });
+        if (this.deviceAnswer === "server-error") return problem(503, "unavailable");
         this.#polls = 0;
         this.#spent = false;
         return json(200, {
@@ -210,7 +222,7 @@ export class FakeServer {
         const answer = this.tokenAnswers[Math.min(this.#polls++, this.tokenAnswers.length - 1)]!;
         if (answer === "server-error") return json(502, {});
         if (answer === "rate-limited") {
-          res.writeHead(429, { "Retry-After": "30" });
+          res.writeHead(429, { "Retry-After": "30", ...requestId });
           res.end();
           return;
         }
@@ -233,7 +245,7 @@ export class FakeServer {
       case "/issuer/revoke": {
         this.revoked.push(form.get("token") ?? "");
         if (this.revokeStatus === 200 && form.get("token") === ACCESS_TOKEN) this.#live = false;
-        res.writeHead(this.revokeStatus);
+        res.writeHead(this.revokeStatus, requestId);
         res.end();
         return;
       }
@@ -244,6 +256,7 @@ export class FakeServer {
         if (this.whoamiAnswer === "not-a-member" || this.whoamiAnswer === "no-organization") return problem(403, this.whoamiAnswer);
         if (this.whoamiAnswer === "unavailable") return problem(503, "unavailable", { "Retry-After": "30" });
         if (this.whoamiAnswer === "garbled") return json(200, { member: "nobody" });
+        if (this.whoamiAnswer === "refused") return problem(400, "invalid-request");
         const expiresAt = this.whoamiExpiresAt ?? new Date((this.#issuedAt || Date.now()) + 3_600_000).toISOString();
         const organization = { ...WHOAMI.organization, name: this.organizationName };
         return json(200, { ...WHOAMI, organization, session: { expiresAt } }, { "Cache-Control": "no-store" });

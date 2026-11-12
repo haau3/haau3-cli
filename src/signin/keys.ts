@@ -5,7 +5,7 @@
 import { ApiKey } from "../key.js";
 import type { CliError, Problem } from "../output.js";
 import { CLI_API_PATH, platformUnavailable, signInUnavailable } from "./discovery.js";
-import { call, displayText, isRecord, problemOf, text } from "./http.js";
+import { call, displayText, holdsSecret, isRecord, problemOf, text } from "./http.js";
 import type { AccessToken } from "./secret.js";
 
 export type KeyMode = "live" | "test";
@@ -69,6 +69,8 @@ export async function createKey(platformURL: string, token: AccessToken, request
         code: "unexpected-answer",
         message: `${host} answered in a way haau3 cannot use (HTTP ${answer.status}), so nothing was written, and it may have made a key. Revoke any you do not recognise on the keys page at ${platformURL}/dashboard/keys.`,
         next: [{ command: "npx haau3@latest --version", description: "Check for a newer haau3." }],
+        // Its status and request id only, the id left out if it holds any of the key the answer gave.
+        problem: problemOf(answer, (value) => holdsKey(value, isRecord(answer.body) ? answer.body.secret : undefined)),
       },
     };
   }
@@ -77,7 +79,7 @@ export async function createKey(platformURL: string, token: AccessToken, request
   if (answer.status === 403 && (problem.code === "not-a-member" || problem.code === "no-organization")) {
     return { kind: "no-organization", code: problem.code, problem };
   }
-  if (answer.status === 404) return { kind: "error", error: { ...signInUnavailable(platformURL), problem } };
+  if (answer.status === 404) return { kind: "error", error: signInUnavailable(platformURL, answer) };
   if (answer.status >= 500) {
     // The platform bounds how long it waits for the database without stopping the write, so an error
     // can come back for a key that was made. Trying again without looking would make a second one.
@@ -108,9 +110,7 @@ const PREFIX = /^haau3_sk_(?:live|test)_[A-Za-z0-9_-]{6}$/;
 export function holdsKey(value: string, secret: unknown): boolean {
   if (/haau3_sk_/i.test(value)) return true;
   if (typeof secret !== "string") return false;
-  const random = secret.replace(/^haau3_sk_(?:live|test)_/, "");
-  for (let i = 0; i + 8 <= random.length; i++) if (value.includes(random.slice(i, i + 8))) return true;
-  return false;
+  return holdsSecret(value, secret.replace(/^haau3_sk_(?:live|test)_/, ""));
 }
 
 /** The 201, or undefined unless it holds exactly a key of the mode asked for and the facts about it. */

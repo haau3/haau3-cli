@@ -1,7 +1,7 @@
 // The two secrets of signing in, held as the API key is (src/key.ts): the access token a session
 // sends, and the device code that only the command line and the sign-in service know while a person
 // approves. Each prints as hidden however it is printed; only reveal() returns the value, for the
-// request that sends it and the store that keeps it.
+// request that sends it, the store that keeps it, and the check that an answer does not repeat it.
 import { inspect } from "node:util";
 
 abstract class Hidden {

@@ -182,7 +182,8 @@ async function finish(ctx: Context, address: string, pending: PendingSignIn, out
   const ends = [now + SESSION_MS, endOnThisClock(who.whoami.session.expiresAt, who.platformNow, now)];
   if (outcome.expiresIn) ends.push(now + outcome.expiresIn * 1000);
   const expiresAt = Math.min(...ends);
-  if (expiresAt <= now) return refuse({ code: "sign-in-refused", message: "The platform says this sign-in has already ended.", next: [LOGIN_STEP] });
+  // Only the platform's end can be past: the token's lifetime and the command line's own are ahead.
+  if (expiresAt <= now) return refuse({ code: "sign-in-refused", message: "The platform says this sign-in has already ended.", next: [LOGIN_STEP], problem: who.answer });
 
   const session: Session = {
     accessToken: token,

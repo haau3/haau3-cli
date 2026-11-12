@@ -20,7 +20,10 @@ export interface NextStep {
   description: string;
 }
 
-/** The API's or the platform's own RFC 9457 problem, as it answered. Never a body. */
+/**
+ * The API's or the platform's own RFC 9457 problem, as it answered; for an answer that is not a
+ * problem, only its status and request id. Never a body, and never a member that holds a secret.
+ */
 export interface Problem {
   type: string;
   title: string;
@@ -35,7 +38,11 @@ export interface CliError {
   code: string;
   message: string;
   next: NextStep[];
-  /** Present when the API's answer is the failure. */
+  /**
+   * Present when an answer from the API or the platform is the failure. An answer that is not a
+   * problem, such as a success haau3 cannot use, gives only its status and request id, with type
+   * about:blank and title `HTTP <status>`.
+   */
   problem?: Problem;
   /**
    * Present when a file must be added to a .gitignore first: the .gitignore, as a path, and the line
