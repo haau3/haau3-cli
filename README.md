@@ -29,7 +29,7 @@ npx haau3 keys create
 ```
 
 `keys create` writes the key to the project's env file as `HAAU3_API_KEY`. Load that file when your
-program starts, such as with `node --env-file=.env`; Next.js and Vite load it themselves. A test key
+program starts, such as with `node --env-file=.env`; Next.js loads it itself. A test key
 is optional: `npx haau3 keys create --test` makes one, which reaches the Sandbox only.
 
 ## Commands
