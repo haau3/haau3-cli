@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { discover } from "../src/signin/discovery.js";
 import { problemOf } from "../src/signin/http.js";
-import { FakeServer, NEW_KEY_MARKERS, PLATFORM_REQUEST_ID, SIGN_IN_SERVICE_REQUEST_ID, type TokenAnswer } from "./fake-server.js";
+import { ACCESS_TOKEN, FakeServer, NEW_KEY_MARKERS, newKey, PLATFORM_REQUEST_ID, SIGN_IN_SERVICE_REQUEST_ID, type TokenAnswer } from "./fake-server.js";
 import { cleanEnv, fakeClock, memoryKeyring, runCli, testStore } from "./helpers.js";
 
 let server: FakeServer;
@@ -170,15 +170,114 @@ describe("every error built from the platform's answer carries its request id", 
     expect(error.problem).toEqual(OFF);
   });
 
-  it("keeps no request id that holds a key, from a success it cannot use", async () => {
+  it.each([
+    ["whoami", "unauthorized", "session-ended", { title: "Refused", status: 401, code: "unauthorized" }],
+    ["whoami", "not-a-member", "not-a-member", { title: "Refused", status: 403, code: "not-a-member" }],
+    ["whoami", "refused", "unexpected-answer", { title: "Refused", status: 400, code: "invalid-request" }],
+    ["whoami", "unavailable", "platform-unavailable", { title: "Refused", status: 503, code: "unavailable" }],
+  ] as const)("%s answered %s: %s, with the refusal's own problem", async (_, answer, code, problem) => {
     await signIn();
-    server.keysAnswer = "key-in-request-id";
+    server.whoamiAnswer = answer;
+    const { error } = json((await cli(["whoami"])).stdout);
+    expect(error.code).toBe(code);
+    expect(error.problem).toEqual({ type: "about:blank", ...problem, requestId: PLATFORM_REQUEST_ID });
+  });
+
+  it.each([
+    ["unauthorized", "sign-in-refused", { title: "Refused", status: 401, code: "unauthorized" }],
+    ["no-organization", "no-organization", { title: "Refused", status: 403, code: "no-organization" }],
+  ] as const)("login --complete with whoami answering %s: %s, with the refusal's own problem", async (answer, code, problem) => {
+    server.whoamiAnswer = answer;
+    await cli(["login"]);
+    const { error } = json((await cli(["login", "--complete"])).stdout);
+    expect(error.code).toBe(code);
+    expect(error.problem).toEqual({ type: "about:blank", ...problem, requestId: PLATFORM_REQUEST_ID });
+  });
+
+  it.each([
+    ["unauthorized", "session-ended", { title: "Refused", status: 401, code: "unauthorized" }],
+    ["not-a-member", "not-a-member", { title: "Refused", status: 403, code: "not-a-member" }],
+    ["invalid-request", "unexpected-answer", { title: "Refused", status: 400, code: "invalid-request" }],
+    ["unavailable", "platform-unavailable", { title: "Refused", status: 503, code: "unavailable" }],
+  ] as const)("keys create answered %s: %s, with the refusal's own problem", async (answer, code, problem) => {
+    await signIn();
+    server.keysAnswer = answer;
+    writeFileSync(join(project, ".env"), "PORT=3000\n");
+    const { error } = json((await cli(["keys", "create"])).stdout);
+    expect(error.code).toBe(code);
+    expect(error.problem).toEqual({ type: "about:blank", ...problem, requestId: PLATFORM_REQUEST_ID });
+  });
+
+  it("login refused its sign-in details with another status: the refusal's own problem", async () => {
+    server.platformMetadata = "refused";
+    const { error } = json((await cli(["login"])).stdout);
+    expect(error.code).toBe("unexpected-answer");
+    expect(error.problem).toEqual({ type: "about:blank", title: "Refused", status: 403, code: "forbidden", requestId: PLATFORM_REQUEST_ID });
+  });
+});
+
+describe("a request id that holds a secret is never kept", () => {
+  const random = newKey("live").replace(/^haau3_sk_live_/, "");
+  const token = ACCESS_TOKEN;
+
+  it.each([
+    ["the key", newKey("live")],
+    ["the key's random part, without its marker", random],
+    ["eight characters of it running", `req-${random.slice(6, 14)}`],
+    ["the key in another form", `${["haau3", "sk", "live"].join(".")}.${random}`],
+  ])("keys create answered a success it cannot use with %s as its request id", async (_, requestId) => {
+    await signIn();
+    server.keysAnswer = "garbled";
+    server.platformRequestId = requestId;
     writeFileSync(join(project, ".env"), "PORT=3000\n");
     const out = await cli(["keys", "create"]);
     assertNoKey(out.stdout + out.stderr);
-    const { error } = json(out.stdout);
-    expect(error.code).toBe("unexpected-answer");
-    expect(error.problem).toEqual({ type: "about:blank", title: "HTTP 201", status: 201 });
+    expect(out.stdout).not.toContain(requestId);
+    expect(json(out.stdout).error.problem).toEqual({ type: "about:blank", title: "HTTP 201", status: 201 });
+  });
+
+  it.each([
+    ["the session's token", token],
+    ["eight characters of it running", `req-${token.slice(8, 16)}`],
+  ])("keys create, whoami and login --complete given %s as a request id", async (_, requestId) => {
+    // A success it cannot use, and a refusal: each built from an answer to a request that sent the token.
+    await signIn();
+    server.platformRequestId = requestId;
+    server.keysAnswer = "garbled";
+    writeFileSync(join(project, ".env"), "PORT=3000\n");
+    const keys = await cli(["keys", "create"]);
+    server.whoamiAnswer = "garbled";
+    const whoami = await cli(["whoami"]);
+    // Each refusal ends the session, so each is asked of a new one.
+    server.keysAnswer = "not-a-member";
+    const refused = await cli(["keys", "create"]);
+    server.whoamiAnswer = "ok";
+    await signIn();
+    server.whoamiAnswer = "unauthorized";
+    const ended = await cli(["whoami"]);
+    for (const out of [keys, whoami, refused, ended]) {
+      expect(out.stdout + out.stderr).not.toContain(requestId);
+      expect(json(out.stdout).error.problem).toBeDefined();
+      expect(json(out.stdout).error.problem.requestId).toBeUndefined();
+    }
+
+    server.platformRequestId = PLATFORM_REQUEST_ID;
+    server.whoamiAnswer = "ok";
+    server.whoamiExpiresAt = new Date(Date.now() - 60 * 60_000).toISOString();
+    await cli(["login"]);
+    server.platformRequestId = requestId;
+    const late = await cli(["login", "--complete"]);
+    expect(late.stdout).not.toContain(requestId);
+    expect(json(late.stdout).error).toMatchObject({ code: "sign-in-refused", problem: { type: "about:blank", title: "HTTP 200", status: 200 } });
+    expect(json(late.stdout).error.problem.requestId).toBeUndefined();
+  });
+
+  it("login, with a key's marker in the sign-in details' request id", async () => {
+    server.platformMetadata = "other-resource";
+    server.platformRequestId = newKey("test");
+    const out = await cli(["login"]);
+    expect(out.stdout).not.toContain(newKey("test"));
+    expect(json(out.stdout).error.problem).toEqual({ type: "about:blank", title: "HTTP 200", status: 200 });
   });
 });
 
@@ -188,8 +287,10 @@ describe("the sign-in service's answers", () => {
     ["issuerMetadata", "foreign-endpoint"],
     ["issuerMetadata", "no-device-grant"],
     ["issuerMetadata", "missing"],
+    ["issuerMetadata", "server-error"],
     ["deviceAnswer", "bad-code"],
     ["deviceAnswer", "invalid_client"],
+    ["deviceAnswer", "server-error"],
   ] as const)("give login no problem, and never their request id: %s %s", async (field, value) => {
     (server as unknown as Record<string, string>)[field] = value;
     const out = await cli(["login"]);
@@ -212,17 +313,37 @@ describe("a success or a redirect", () => {
   // Every member a problem has, in a body that is not one.
   const body = { type: "https://example.com/not-a-problem", title: "Looks like one", status: 418, code: "looks-like-one", detail: "Not a problem." };
 
-  it.each([200, 201, 302])("keeps only its status and request id: HTTP %i", (status) => {
+  it.each([200, 201, 202, 204, 301, 302, 304, 399])("keeps only its status and request id: HTTP %i", (status) => {
     expect(problemOf({ status, headers: new Headers({ "X-Request-Id": "req_123" }), body })).toEqual({ type: "about:blank", title: `HTTP ${status}`, status, requestId: "req_123" });
   });
 
-  it("while a refusal's members are still read", () => {
-    expect(problemOf({ status: 400, headers: new Headers({ "X-Request-Id": "req_123" }), body })).toEqual({
+  it.each([400, 404, 500])("while a refusal's members are still read: HTTP %i", (status) => {
+    expect(problemOf({ status, headers: new Headers({ "X-Request-Id": "req_123" }), body })).toEqual({
       type: "https://example.com/not-a-problem",
       title: "Looks like one",
-      status: 400,
+      status,
       code: "looks-like-one",
       requestId: "req_123",
     });
+  });
+});
+
+describe("a request id", () => {
+  const idOf = (requestId: string) => problemOf({ status: 200, headers: new Headers({ "X-Request-Id": requestId }), body: undefined }).requestId;
+
+  it("is kept up to 100 characters, and not past them", () => {
+    expect(idOf("a".repeat(100))).toBe("a".repeat(100));
+    expect(idOf("a".repeat(101))).toBeUndefined();
+  });
+
+  it("is kept with letters, digits and . : _ - only", () => {
+    expect(idOf("f4a8f8cf-2df6-41d2-ac99-5a589fc11714")).toBe("f4a8f8cf-2df6-41d2-ac99-5a589fc11714");
+    expect(idOf("req_1.a:b")).toBe("req_1.a:b");
+    for (const other of ["a/b", "a=b", "a+b", "a b", "a;b", "a<b", "a\"b", "a%20"]) expect(idOf(other)).toBeUndefined();
+  });
+
+  it("is dropped when it holds a key's marker, in any case", () => {
+    expect(idOf(["HAAU3", "SK", "x"].join("_"))).toBeUndefined();
+    expect(idOf(`req-${["haau3", "sk", "x"].join("_")}`)).toBeUndefined();
   });
 });
