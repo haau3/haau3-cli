@@ -320,6 +320,22 @@ export class FakeServer {
       }
       case "/health":
         return json(200, { status: "ok" });
+      case "/openapi.json":
+        // For test: one service, the FHIR base's metadata, which answers as apiAnswer says.
+        return json(200, {
+          openapi: "3.1.0",
+          info: { title: "API", version: "1.0.0-preview.1" },
+          tags: [{ name: "FHIR base" }],
+          paths: {
+            "/v1/fhir/r4/metadata": {
+              get: {
+                tags: ["FHIR base"],
+                operationId: "fhirMetadata",
+                responses: { "200": { description: "ok", content: { "application/fhir+json": { schema: { $ref: "#/components/schemas/CapabilityStatement" } } } } },
+              },
+            },
+          },
+        });
       case "/v1/fhir/r4/metadata": {
         const fhir = (status: number, value: unknown, headers: Record<string, string> = {}) => {
           res.writeHead(status, { "Content-Type": "application/fhir+json; fhirVersion=4.0", ...requestId, ...headers });

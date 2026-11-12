@@ -40,6 +40,9 @@ describe("help", () => {
     expect(HELP.commands.map((c) => c.name)).toEqual([
       "doctor",
       "doctor --file <file>",
+      "test [service]",
+      "test <service> --all",
+      "test --file <file>",
       "login",
       "login --complete",
       "whoami",

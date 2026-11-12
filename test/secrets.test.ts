@@ -91,6 +91,14 @@ const COMMANDS: [string, string[]][] = [
   ["the key after doctor", ["doctor", IN_ENVIRONMENT]],
   ["the key as doctor's --file", ["doctor", "--file", IN_ENVIRONMENT]],
   ["the key as doctor's env file's name", ["doctor", "--file", `.env${IN_ENVIRONMENT}`]],
+  ["test", ["test"]],
+  ["test a service", ["test", "fhir-base"]],
+  ["test --all", ["test", "fhir-base", "--all"]],
+  ["test --file", ["test", "--file", ".env"]],
+  ["the key as test's service", ["test", IN_ENVIRONMENT]],
+  ["the key after test's service", ["test", "fhir-base", IN_ENVIRONMENT]],
+  ["the key as test's --file", ["test", "--file", IN_ENVIRONMENT]],
+  ["the key as test's --all value", ["test", `--all=${IN_ENVIRONMENT}`]],
 ];
 
 let project: string;
@@ -397,6 +405,52 @@ describe("doctor never prints a key, a near-miss's value or name, or what the AP
       assertClean(out.stderr, `stderr of ${args.join(" ")}`);
     }
     expect(server.to("/v1/fhir/r4/metadata").length).toBeGreaterThan(0);
+  });
+});
+
+describe("test never prints a key, or what the API sent back", () => {
+  const answers: ApiAnswer[] = ["ok", "unauthorized", "rate-limited", "unavailable", "echo"];
+  for (const answer of answers) {
+    it(`when the API answers ${answer}, at a terminal and not, as text and as JSON`, async () => {
+      server.apiAnswer = answer;
+      for (const tty of [true, false]) {
+        for (const output of ["", "json", "text"]) {
+          for (const env of [
+            { HAAU3_BASE_URL: server.url },
+            { HAAU3_BASE_URL: server.url, HAAU3_API_KEY: IN_ENVIRONMENT },
+            { HAAU3_BASE_URL: server.url, HAAU3_ENVIRONMENT: "sandbox", HAAU3_API_KEY: IN_ENV_LOCAL },
+            { HAAU3_BASE_URL: `${server.url}/${IN_ENVIRONMENT}` },
+          ]) {
+            const before = server.requests.length;
+            for (const args of [["test"], ["test", "fhir-base", "--all"]]) {
+              const out = await runCli(args, {
+                tty,
+                env: { HAAU3_OUTPUT: output, HAAU3_PLATFORM_URL: server.url, NEIGHBOUR_TOKEN: NEIGHBOUR, ...env },
+                cwd: project,
+                io: { store: testStore(dir, memoryKeyring()), ...fakeClock() },
+              });
+              assertClean(out.stdout, `stdout of ${args.join(" ")}`);
+              assertClean(out.stderr, `stderr of ${args.join(" ")}`);
+            }
+            // A base URL that holds a key is never called, so the key goes nowhere.
+            if (env.HAAU3_BASE_URL !== server.url) expect(server.requests.length).toBe(before);
+          }
+        }
+      }
+      // test read the spec and called the API here, so the check above saw real answers.
+      expect(server.to("/openapi.json").length).toBeGreaterThan(0);
+      expect(server.to("/v1/fhir/r4/metadata").length).toBeGreaterThan(0);
+    });
+  }
+
+  it("as a real process, whose stdout is a pipe", async () => {
+    server.apiAnswer = "echo";
+    const env = { HAAU3_BASE_URL: server.url, HAAU3_PLATFORM_URL: server.url, HAAU3_SESSION_STORE: "file", HAAU3_CONFIG_DIR: dir, HAAU3_API_KEY: IN_ENVIRONMENT };
+    const out = await spawnCliAsync(["test"], { cwd: project, env });
+    expect(out.stdout.startsWith("{")).toBe(true);
+    expect(out.code).toBe(1);
+    assertClean(out.stdout, "stdout of test");
+    assertClean(out.stderr, "stderr of test");
   });
 });
 
