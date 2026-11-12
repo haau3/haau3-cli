@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.6](https://github.com/haau3/haau3-cli/compare/v0.1.5...v0.1.6) (2026-11-12)
+
+
+### Features
+
+* haau3 test, one safe call per service from the published spec ([#14](https://github.com/haau3/haau3-cli/issues/14)) ([eb1da94](https://github.com/haau3/haau3-cli/commit/eb1da94dcad1641a2818aed4325e929fe06f7393))
+
 ## [0.1.5](https://github.com/haau3/haau3-cli/compare/v0.1.4...v0.1.5) (2026-11-12)
 
 
