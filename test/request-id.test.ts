@@ -246,6 +246,8 @@ describe("a request id that holds a secret is never kept", () => {
     server.keysAnswer = "garbled";
     writeFileSync(join(project, ".env"), "PORT=3000\n");
     const keys = await cli(["keys", "create"]);
+    // A success, even one it cannot use, made a key and so ended the sign-in.
+    await signIn();
     server.whoamiAnswer = "garbled";
     const whoami = await cli(["whoami"]);
     // Each refusal ends the session, so each is asked of a new one.

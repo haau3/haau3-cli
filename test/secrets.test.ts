@@ -299,6 +299,7 @@ describe("a new key is written to the env file and nowhere else", () => {
               };
               await run(["login"]);
               await run(["login", "--complete"]);
+              // Refused before the platform is asked (.env holds a key already), so the session is kept.
               await run(["keys", "create"]);
               server.keysAnswer = answer;
               await run(["keys", "create", "--replace"]);
@@ -318,8 +319,11 @@ describe("a new key is written to the env file and nowhere else", () => {
                 expect(holding(newKey("live"))).toEqual([]);
                 expect(readFileSync(join(keys, ".env"), "utf8")).toBe(`NEIGHBOUR_TOKEN=${NEIGHBOUR}\r\nHAAU3_API_KEY=${IN_ENV}\r\n`);
               }
-              // A refused session is ended, so the test key that follows is never made.
-              const ended = answer === "unauthorized" || answer === "not-a-member";
+              // Every answer to the --replace ends the session, so the test key that follows is never
+              // made, except a 400 or a 404, which spend nothing. The rest refuse the session (401,
+              // 403) or made or may have made a key (any success, used or not, a failure, no answer).
+              const kept = answer === "key-in-problem" || answer === "off";
+              const ended = !kept;
               expect(holding(newKey("test"))).toEqual(ended ? [] : [join(keys, "sandbox.env")]);
             } finally {
               rmSync(keys, { recursive: true, force: true });
@@ -336,7 +340,18 @@ describe("a new key is written to the env file and nowhere else", () => {
     try {
       const env = { HAAU3_API_KEY: IN_ENVIRONMENT, HAAU3_PLATFORM_URL: server.url, HAAU3_SESSION_STORE: "file", HAAU3_CONFIG_DIR: dir };
       // --file as a real process too: a flag Node took as its own would never reach the command line.
-      const runs = [["login"], ["login", "--complete"], ["keys", "create"], ["keys", "create"], ["keys", "create", "--test", "--file", "sandbox.env"], ["keys", "create", `--file=${IN_ENVIRONMENT}.env`]];
+      // Making a key ends the sign-in: the second `keys create` finds none, and the next key signs in
+      // again. The last sign-in is kept, so the store is read with a session in it.
+      const signIn = [["login"], ["login", "--complete"]];
+      const runs = [
+        ...signIn,
+        ["keys", "create"],
+        ["keys", "create"],
+        ...signIn,
+        ["keys", "create", "--test", "--file", "sandbox.env"],
+        ...signIn,
+        ["keys", "create", `--file=${IN_ENVIRONMENT}.env`],
+      ];
       for (const args of runs) {
         const out = await spawnCliAsync(args, { cwd: keys, env });
         expect(out.stdout.startsWith("{"), `${args[0]} printed its document`).toBe(true);

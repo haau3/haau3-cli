@@ -103,7 +103,9 @@ describe("keys create, signed in", () => {
     expect(out.stdout).toContain("Next:\n  npx haau3 doctor\n");
     expect(read(".env")).toBe(`HAAU3_API_KEY=${newKey("test")}\n`);
     expect(json(server.to("/api/cli/v1/keys")[0]!.body).mode).toBe("test");
-    expect(json((await cli(["keys", "create", "--test", "--replace"])).stdout).environment).toBe("sandbox");
+    await signIn();
+    const replaced = json((await cli(["keys", "create", "--test", "--replace"])).stdout);
+    expect(replaced).toMatchObject({ ok: true, environment: "sandbox" });
   });
 
   it("names the key with --name, and refuses a name that holds a key without repeating it", async () => {
@@ -122,6 +124,8 @@ describe("keys create, signed in", () => {
 
   it("writes .env.local for a Next.js or Vite project", async () => {
     for (const framework of ["next", "vite"]) {
+      // Making a key ends the sign-in, so each key has its own.
+      if (framework === "vite") await signIn();
       rmSync(join(project, ".env.local"), { force: true });
       writeFileSync(join(project, "package.json"), JSON.stringify({ dependencies: framework === "next" ? { next: "16.0.0" } : {}, devDependencies: framework === "vite" ? { vite: "7.0.0" } : {} }));
       const out = await cli(["keys", "create"]);
@@ -277,6 +281,63 @@ describe("keys create in a git repository", () => {
 });
 
 describe("keys create and the session", () => {
+  // Making a key ends the sign-in: the platform ends the approval before it makes the key, and the
+  // command line ends this computer's session once the key is made, revoking from here as well.
+  it("ends the sign-in once the key is made: the grant revoked from here too, and no session kept", async () => {
+    await signIn();
+    const out = await cli(["keys", "create"]);
+    expect(out.code).toBe(0);
+    expect(server.revoked).toEqual([ACCESS_TOKEN]);
+    expect(keyring.entries.has(server.url)).toBe(false);
+
+    const again = await cli(["keys", "create", "--replace"]);
+    expect(again.code).toBe(1);
+    expect(json(again.stdout).error).toMatchObject({ code: "not-signed-in", next: [{ command: "npx haau3 login" }] });
+    expect(json((await cli(["whoami"])).stdout).error.code).toBe("not-signed-in");
+    expect(keyCalls()).toBe(1);
+  });
+
+  it("says so at a terminal, and in its help", async () => {
+    await signIn();
+    const out = await cli(["keys", "create"], { tty: true });
+    expect(out.stdout).toContain("Making a key ends the sign-in, so sign in again before making another.");
+    expect((await cli(["--help"], { tty: true })).stdout).toContain("Making a key ends the sign-in.");
+  });
+
+  it("still ends the session when its own revoke fails, since the key is made and the platform ended the grant", async () => {
+    await signIn();
+    server.revokeStatus = 503;
+    const out = await cli(["keys", "create"]);
+    expect(out.code).toBe(0);
+    expect(json(out.stdout).data.status).toBe("created");
+    expect(server.revoked).toEqual([ACCESS_TOKEN]);
+    expect(keyring.entries.has(server.url)).toBe(false);
+  });
+
+  it("ends the session when the key is made but the file cannot be written, and says to sign in first", async () => {
+    await signIn();
+    writeFileSync(join(project, ".env"), "PORT=3000\n");
+    server.onKeys = () => {
+      rmSync(join(project, ".env"));
+      mkdirSync(join(project, ".env"));
+    };
+    const out = await cli(["keys", "create"]);
+    const error = json(out.stdout).error;
+    expect(error.code).toBe("write-failed");
+    expect(error.message).toContain("Making a key ended the sign-in, so sign in again before trying again.");
+    expect(error.next.map((n: { command: string }) => n.command)).toEqual(["npx haau3 login", "npx haau3 keys create"]);
+    expect(server.revoked).toEqual([ACCESS_TOKEN]);
+    expect(keyring.entries.has(server.url)).toBe(false);
+  });
+
+  it("keeps the session when the platform refused the request and made no key", async () => {
+    await signIn();
+    server.keysAnswer = "invalid-request";
+    expect((await cli(["keys", "create"])).code).toBe(1);
+    expect(server.revoked).toEqual([]);
+    expect(keyring.entries.has(server.url)).toBe(true);
+  });
+
   it("says to sign in when there is no session, and asks nothing of the platform", async () => {
     const out = await cli(["keys", "create"]);
     expect(out.code).toBe(1);
@@ -309,9 +370,10 @@ describe("keys create and the session", () => {
     expect(existsSync(join(project, ".env"))).toBe(false);
   });
 
-  it("keeps the session when the platform cannot answer just now, and says a key may have been made", async () => {
-    await signIn();
+  it("ends the session when the platform cannot answer just now, and says a key may have been made", async () => {
     for (const answer of ["unavailable", "server-error"] as KeysAnswer[]) {
+      await signIn();
+      server.revoked.length = 0;
       server.keysAnswer = answer;
       const out = await cli(["keys", "create"]);
       const error = json(out.stdout).error;
@@ -319,9 +381,59 @@ describe("keys create and the session", () => {
       // The platform's bound does not stop the write, so a key may exist: look before trying again.
       expect(error.message).toContain("It may have made a key anyway");
       expect(error.message).toContain(`${server.url}/dashboard/keys`);
+      // And the platform may have ended the sign-in before it failed, so it is ended here too.
+      expect(error.message).toContain("Asking for a key may have ended the sign-in, so it is ended here too: sign in again before trying again.");
+      expect(error.next.map((n: { command: string }) => n.command)).toEqual(["npx haau3 login"]);
+      expect(server.revoked).toEqual([ACCESS_TOKEN]);
+      expect(keyring.entries.has(server.url)).toBe(false);
     }
-    expect(server.revoked).toEqual([]);
-    expect(keyring.entries.has(server.url)).toBe(true);
+  });
+
+  it("writes the key before it ends the session, so a slow or failed revoke cannot cost the key", async () => {
+    await signIn();
+    let fileAtRevoke: string | null = null;
+    server.onRevoke = () => {
+      fileAtRevoke = existsSync(join(project, ".env")) ? read(".env") : null;
+    };
+    expect((await cli(["keys", "create"])).code).toBe(0);
+    expect(fileAtRevoke).toBe(`HAAU3_API_KEY=${newKey("live")}\n`);
+  });
+
+  it("finishes within the revoke's own bound when the sign-in service never answers it", { timeout: 20_000 }, async () => {
+    await signIn();
+    server.revokeHangs = true;
+    const started = Date.now();
+    const out = await cli(["keys", "create"]);
+    expect(out.code).toBe(0);
+    expect(Date.now() - started).toBeLessThan(10_000);
+    expect(read(".env")).toBe(`HAAU3_API_KEY=${newKey("live")}\n`);
+    expect(keyring.entries.has(server.url)).toBe(false);
+  });
+
+  // Another run (a `login --complete` in a sandbox, say) may keep a session while this one waits on
+  // the platform: this run ends only its own grant, and leaves that session where it is.
+  it.each([
+    ["a key it writes", "created" as KeysAnswer, false],
+    ["a success it cannot use", "garbled" as KeysAnswer, false],
+    ["a key it cannot write", "created" as KeysAnswer, true],
+    ["no answer", "no-answer" as KeysAnswer, false],
+  ])("leaves a session another run kept while this one waited, after %s", async (_, answer, breakFile) => {
+    await signIn();
+    server.keysAnswer = answer;
+    if (breakFile) writeFileSync(join(project, ".env"), "PORT=3000\n");
+    const other = ["oat", "ANOTHERRUNSTOKEN"].join("_");
+    server.onKeys = () => {
+      const stored = JSON.parse(keyring.entries.get(server.url)!);
+      stored.session.accessToken = other;
+      keyring.entries.set(server.url, JSON.stringify(stored));
+      if (breakFile) {
+        rmSync(join(project, ".env"));
+        mkdirSync(join(project, ".env"));
+      }
+    };
+    await cli(["keys", "create"]);
+    expect(server.revoked).toEqual([ACCESS_TOKEN]);
+    expect(JSON.parse(keyring.entries.get(server.url)!).session.accessToken).toBe(other);
   });
 
   it("leaves a session another run kept while this one waited on the platform", async () => {
@@ -363,6 +475,13 @@ describe("keys create when the answer cannot be used", () => {
     expect(error.code).toBe("unexpected-answer");
     expect(error.message).toContain("/dashboard/keys");
     expect(read(".env")).toBe("PORT=3000\n");
+    // A success, even one it cannot use, made a key and so ended the sign-in: this end of it goes too.
+    expect(error.message).toContain("Making a key ended the sign-in, so sign in again before trying again.");
+    // A newer haau3 first, then the sign-in: the other way round spends an approval on the same version.
+    const next = error.next.map((n: { command: string }) => n.command);
+    expect(next).toEqual(["npx haau3@latest --version", "npx haau3 login"]);
+    expect(server.revoked).toEqual([ACCESS_TOKEN]);
+    expect(keyring.entries.has(server.url)).toBe(false);
   });
 
   it("prints no member of a problem that holds a key", async () => {
@@ -372,13 +491,17 @@ describe("keys create when the answer cannot be used", () => {
     expect(json(out.stdout).error.problem).toEqual({ type: "about:blank", title: "HTTP 400", status: 400, code: "invalid-request" });
   });
 
-  it("says a key may have been made when no answer comes", async () => {
+  it("says a key may have been made when no answer comes, and ends the session, which it may have spent", async () => {
     server.keysAnswer = "no-answer";
     const out = await cli(["keys", "create"]);
     const error = json(out.stdout).error;
     expect(error.code).toBe("platform-unreachable");
     expect(error.message).toContain("A key may have been made");
+    expect(error.message).toContain("Asking for a key may have ended the sign-in");
+    expect(error.next.map((n: { command: string }) => n.command)).toEqual(["npx haau3 login"]);
     expect(existsSync(join(project, ".env"))).toBe(false);
+    expect(server.revoked).toEqual([ACCESS_TOKEN]);
+    expect(keyring.entries.has(server.url)).toBe(false);
   });
 
   it("says the key was made and names it when the file cannot be written after all", async () => {

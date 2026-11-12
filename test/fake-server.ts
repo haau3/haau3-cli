@@ -120,6 +120,10 @@ export class FakeServer {
   /** When the platform says the session ends; null means an hour after the token was handed out. */
   whoamiExpiresAt: string | null = null;
   revokeStatus = 200;
+  /** The revocation endpoint never answers: to hold a command to its own bound. */
+  revokeHangs = false;
+  /** Runs when a revocation arrives, before it is answered: to see what was done before it. */
+  onRevoke: (() => void) | null = null;
   interval: number | undefined = 5;
   expiresIn = 600;
   /** The scopes the platform's metadata lists. */
@@ -158,6 +162,8 @@ export class FakeServer {
   }
 
   async stop(): Promise<void> {
+    // An answer held back on purpose would keep its connection, and close() would wait for it.
+    this.#server?.closeAllConnections();
     await new Promise<void>((resolve) => this.#server?.close(() => resolve()));
   }
 
@@ -252,6 +258,8 @@ export class FakeServer {
       }
       case "/issuer/revoke": {
         this.revoked.push(form.get("token") ?? "");
+        this.onRevoke?.();
+        if (this.revokeHangs) return;
         if (this.revokeStatus === 200 && form.get("token") === ACCESS_TOKEN) this.#live = false;
         res.writeHead(this.revokeStatus, requestId);
         res.end();
@@ -309,6 +317,8 @@ export class FakeServer {
           createdVia: "cli",
           secret: newKey(mode),
         };
+        // The platform ends the approval before it makes a key, so from here the token is spent.
+        this.#live = false;
         if (this.keysAnswer === "garbled") return json(201, { id: made.id, secret: made.secret });
         if (this.keysAnswer === "wrong-mode") {
           const other = mode === "live" ? "test" : "live";
