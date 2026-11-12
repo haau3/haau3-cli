@@ -60,7 +60,7 @@ describe("login with no terminal, as an agent runs it", () => {
     const out = await cli(["login"]);
     expect(out.code).toBe(0);
     const document = json(out.stdout);
-    expect(document).toMatchObject({ formatVersion: "1.2", command: "login", ok: true, environment: null, error: null });
+    expect(document).toMatchObject({ formatVersion: "1.3", command: "login", ok: true, environment: null, error: null });
     expect(document.data).toEqual({
       status: "approval-needed",
       verificationUri: `${server.url}/device`,

@@ -65,6 +65,14 @@ export interface Target extends Chosen {
 
 export type InspectResult = { ok: true; target: Target } | { ok: false; error: CliError };
 
+/**
+ * Whether a path can be printed and put in a command: plain path characters and no key. A path
+ * outside the current folder is printed whole, and its parent folders' names can hold anything.
+ */
+export function printablePath(path: string): boolean {
+  return path.length <= 1024 && PLAIN_PATH.test(path) && !KEY_MARKER.test(path);
+}
+
 /** The path as a person reads it, relative to the current folder when it is inside it. */
 export function shownPath(path: string, cwd: string): string {
   const rel = relative(resolve(cwd), path);
@@ -119,6 +127,24 @@ export function readsEnvLocal(folder: string): boolean {
   }
 }
 
+/**
+ * Why a file named with --file cannot be used, or null. Checked before anything repeats it: an env
+ * file's name, in characters no shell reads, and never a key. The path is printed back, and put in
+ * commands an agent may run. `instead` is the command to run without it.
+ */
+export function fileFlagError(file: string, instead: { command: string; description: string }): CliError | null {
+  const name = basename(file);
+  if (file.length > 1024 || KEY_MARKER.test(file) || !PLAIN_PATH.test(file) || !ENV_FILE_NAME.test(name)) {
+    return {
+      code: "invalid-file",
+      message:
+        "--file must name an env file: a file whose name starts or ends with .env, such as .env.local or prod.env, in a path of letters, digits, spaces and . _ - / \\ : @ + ~ only.",
+      next: [instead],
+    };
+  }
+  return null;
+}
+
 /** Which file to write, by the rules at the top of this file, or why none can be chosen. */
 export function chooseFile({
   cwd,
@@ -133,23 +159,12 @@ export function chooseFile({
   platform?: NodeJS.Platform;
 }): ChooseResult {
   if (file !== undefined) {
-    // Checked before anything repeats it: an env file's name, in characters no shell reads, and never
-    // a key. The path is printed back, and put in commands an agent may run.
-    const name = basename(file);
-    if (file.length > 1024 || KEY_MARKER.test(file) || !PLAIN_PATH.test(file) || !ENV_FILE_NAME.test(name)) {
-      return {
-        ok: false,
-        usage: true,
-        error: {
-          code: "invalid-file",
-          message:
-            "--file must name an env file: a file whose name starts or ends with .env, such as .env.local or prod.env, in a path of letters, digits, spaces and . _ - / \\ : @ + ~ only.",
-          next: [{ command: "npx haau3 keys create", description: "Write to the project's own env file instead." }],
-        },
-      };
-    }
+    const refused = fileFlagError(file, { command: "npx haau3 keys create", description: "Write to the project's own env file instead." });
+    if (refused) return { ok: false, usage: true, error: refused };
     const path = resolve(cwd, file);
-    return { ok: true, chosen: { path, shown: shownPath(path, cwd), reason: "named" } };
+    // The argument itself, already checked, when the path as printed holds anything that is not plain.
+    const shown = shownPath(path, cwd);
+    return { ok: true, chosen: { path, shown: printablePath(shown) ? shown : file, reason: "named" } };
   }
 
   const folder = resolve(cwd);
@@ -169,14 +184,18 @@ export function chooseFile({
     const path = join(folder, name);
     return { path, shown: name, reason: "existing" };
   };
-  for (const name of KEY_FILES) {
+  // The files the project's loader reads, in its order: .env.local then .env for Next.js and Vite,
+  // .env alone otherwise (owner, 2026-11-12), so doctor finds the key where this writes it.
+  const local = readsEnvLocal(folder);
+  const files = local ? KEY_FILES : ([".env"] as const);
+  for (const name of files) {
+    // The first that defines the variable, even empty: that one is what the loader reads.
     const value = readIfFile(join(folder, name));
-    if (value !== null && present(valueIn(value))) return { ok: true, chosen: { ...at(name), reason: "holds-key" } };
+    if (value !== null && valueIn(value) !== undefined) return { ok: true, chosen: { ...at(name), reason: "holds-key" } };
   }
-  for (const name of KEY_FILES) {
+  for (const name of files) {
     if (exists(join(folder, name))) return { ok: true, chosen: at(name) };
   }
-  const local = readsEnvLocal(folder);
   const name = local ? ".env.local" : ".env";
   return { ok: true, chosen: { path: join(folder, name), shown: name, reason: local ? "framework" : "default" } };
 }

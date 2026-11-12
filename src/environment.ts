@@ -1,29 +1,23 @@
-// Where a call goes. The one place the command line decides it, so that giving the Sandbox a host of
-// its own one day changes this file and nothing else. The platform's address, where signing in
-// starts, is decided here too, by the same rules.
+// The addresses the command line calls. Where an API call goes is the SDK's to decide: the key's mode
+// picks the host, and HAAU3_ENVIRONMENT and HAAU3_BASE_URL change it (see src/settings.ts). What stays
+// here is the rule every address the command line itself is given must keep, and the platform's
+// address, where signing in starts.
 import type { CliError } from "./output.js";
 
-/** The API's two environments: production, and the Sandbox, its twin that answers with test data. */
+/** The API's two environments: production, and the Sandbox, its twin that answers with fixed answers and test data. */
 export type Environment = "production" | "sandbox";
 
-export const DEFAULT_BASE_URL = "https://api.haau3.com";
-
-/** The variable the SDKs read too, so a project points both at the same place. */
-export const BASE_URL_VARIABLE = "HAAU3_BASE_URL";
+/** Each environment's own address, as the SDK has it. */
+export const ENVIRONMENT_ADDRESSES: Readonly<Record<Environment, string>> = {
+  production: "https://api.haau3.com",
+  sandbox: "https://sandbox.haau3.com",
+};
 
 /** Where signing in starts: the dashboard's address, which says how to sign in (RFC 9728). */
 export const DEFAULT_PLATFORM_URL = "https://platform.haau3.com";
 
 /** Points signing in at another copy of the platform, for development. */
 export const PLATFORM_URL_VARIABLE = "HAAU3_PLATFORM_URL";
-
-export interface Target {
-  environment: Environment;
-  /** The address calls to this environment go to, with no trailing slash. */
-  baseURL: string;
-}
-
-export type TargetResult = { ok: true; target: Target } | { ok: false; error: CliError };
 
 export type PlatformResult = { ok: true; platformURL: string } | { ok: false; error: CliError };
 
@@ -34,13 +28,13 @@ export function isSafeAddress(url: URL): boolean {
   return url.protocol === "https:" || (url.protocol === "http:" && LOCAL_HOSTS.has(url.hostname));
 }
 
-type AddressCheck = { ok: true; address: string } | { ok: false; why: string };
+export type AddressCheck = { ok: true; address: string } | { ok: false; why: string };
 
 /** The address with no trailing slash, or why it cannot be used. The value itself is never repeated. */
-function checkAddress(configured: string): AddressCheck {
+export function checkAddress(configured: string): AddressCheck {
   let url: URL;
   try {
-    url = new URL(configured);
+    url = new URL(configured.trim());
   } catch {
     return { ok: false, why: "is not an address" };
   }
@@ -48,19 +42,6 @@ function checkAddress(configured: string): AddressCheck {
   if (url.search || url.hash) return { ok: false, why: "carries a query or a fragment" };
   if (!isSafeAddress(url)) return { ok: false, why: "is neither https nor http on this computer" };
   return { ok: true, address: `${url.origin}${url.pathname}`.replace(/\/+$/, "") };
-}
-
-/**
- * Today both environments are the API's host: the Sandbox is a path on it, which the SDK's Sandbox
- * methods name. HAAU3_BASE_URL points both elsewhere, for development: an https address, or http on
- * this computer.
- */
-export function resolveTarget(environment: Environment, env: NodeJS.ProcessEnv): TargetResult {
-  const configured = env[BASE_URL_VARIABLE]?.trim();
-  if (!configured) return { ok: true, target: { environment, baseURL: DEFAULT_BASE_URL } };
-  const checked = checkAddress(configured);
-  if (!checked.ok) return { ok: false, error: invalidAddress(BASE_URL_VARIABLE, checked.why, "invalid-base-url", `Call the API at ${DEFAULT_BASE_URL}, the address it has unless you are developing against another.`) };
-  return { ok: true, target: { environment, baseURL: checked.address } };
 }
 
 /** The platform's address: platform.haau3.com, or HAAU3_PLATFORM_URL by the same rules as the API's. */

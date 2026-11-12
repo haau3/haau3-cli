@@ -70,14 +70,14 @@ describe("keys create, signed in", () => {
     assertNoKey(out.stdout + out.stderr);
     expect(out.code).toBe(0);
     const document = json(out.stdout);
-    expect(document).toMatchObject({ formatVersion: "1.2", command: "keys create", ok: true, environment: "production", error: null });
+    expect(document).toMatchObject({ formatVersion: "1.3", command: "keys create", ok: true, environment: "production", error: null });
     expect(document.data).toMatchObject({
       status: "created",
       key: { id: "key_fake_1", prefix: newKeyPrefix("live"), mode: "live" },
       organization: { id: "org_1", name: "Example Org" },
       envFile: { path: ".env", created: true, gitRepository: false },
       replaced: null,
-      next: [{ command: "npx haau3 whoami", description: expect.any(String) }],
+      next: [{ command: "npx haau3 doctor", description: expect.any(String) }],
     });
     expect(document.data.warnings.map((w: { code: string }) => w.code)).toEqual(["no-git-repository"]);
     expect(read(".env")).toBe(`HAAU3_API_KEY=${newKey("live")}\n`);
@@ -100,7 +100,7 @@ describe("keys create, signed in", () => {
     expect(out.stdout).toContain(`  Prefix: ${newKeyPrefix("test")}`);
     expect(out.stdout).toContain("  Id:     key_fake_1");
     expect(out.stdout).toContain("A test key reaches the Sandbox only.");
-    expect(out.stdout).toContain("Next:\n  npx haau3 whoami\n");
+    expect(out.stdout).toContain("Next:\n  npx haau3 doctor\n");
     expect(read(".env")).toBe(`HAAU3_API_KEY=${newKey("test")}\n`);
     expect(json(server.to("/api/cli/v1/keys")[0]!.body).mode).toBe("test");
     expect(json((await cli(["keys", "create", "--test", "--replace"])).stdout).environment).toBe("sandbox");
@@ -237,7 +237,7 @@ describe("keys create in a git repository", () => {
     const out = await cli(["keys", "create"]);
     expect(out.code).toBe(1);
     const document = json(out.stdout);
-    expect(document.formatVersion).toBe("1.2");
+    expect(document.formatVersion).toBe("1.3");
     expect(document.error).toMatchObject({ code: "env-file-not-ignored", gitignore: { file: ".gitignore", line: ".env.local" } });
     expect(document.error.message).toContain("Add this line to .gitignore, then run this again:\n  .env.local");
     expect(document.error.next[0].command).toBe("npx haau3 keys create");

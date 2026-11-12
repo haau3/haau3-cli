@@ -8,7 +8,7 @@ import { VERSION } from "./version.js";
  * fields, which a reader ignores; a major bump changes or removes one, and a reader that does not
  * know that major refuses the document.
  */
-export const FORMAT_VERSION = "1.2";
+export const FORMAT_VERSION = "1.3";
 
 /** 0: it worked. 1: it ran and something failed. 2: it was used wrongly. error.code says which. */
 export const EXIT = { ok: 0, failed: 1, usage: 2 } as const;
@@ -51,7 +51,11 @@ export interface CliError {
   gitignore?: { file: string; line: string };
 }
 
-/** Every command prints one of these. Each field is always present; data or error is null. */
+/**
+ * Every command prints one of these. Each field is always present. On success error is null; on
+ * failure data is null, except for a command whose answer is a report, `doctor`, which carries its
+ * data either way (format 1.3), so a failing run still lists what it checked.
+ */
 export interface Document<T = unknown> {
   formatVersion: typeof FORMAT_VERSION;
   cli: "haau3";
@@ -69,8 +73,8 @@ export function success<T>(command: string, data: T, environment: Environment | 
   return { formatVersion: FORMAT_VERSION, cli: "haau3", cliVersion: VERSION, command, ok: true, environment, data, error: null };
 }
 
-export function failure(command: string | null, error: CliError, environment: Environment | null = null): Document<never> {
-  return { formatVersion: FORMAT_VERSION, cli: "haau3", cliVersion: VERSION, command, ok: false, environment, data: null, error };
+export function failure<T = never>(command: string | null, error: CliError, environment: Environment | null = null, data: T | null = null): Document<T> {
+  return { formatVersion: FORMAT_VERSION, cli: "haau3", cliVersion: VERSION, command, ok: false, environment, data, error };
 }
 
 export function render(document: Document): string {

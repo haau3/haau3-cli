@@ -12,7 +12,7 @@ import { gitAnswer, type GitAnswer } from "../git.js";
 import { environmentOf, KEY_FILES, KEY_VARIABLE } from "../key.js";
 import type { CliError, NextStep } from "../output.js";
 import { createKey, type KeyMode, type MadeKey } from "../signin/keys.js";
-import { COMPLETE_STEP, done, failed, LOGIN_STEP, misused, nextText, WHOAMI_STEP, when, type Context, type Result } from "./context.js";
+import { arg, COMPLETE_STEP, doctorStep, done, failed, fileFlag, LOGIN_STEP, misused, nextText, when, type Context, type Result } from "./context.js";
 import { organizationError } from "./login.js";
 import { endStoredSession, loadRecord } from "./session.js";
 
@@ -76,21 +76,13 @@ export function checkName(value: string): NameCheck {
   return { ok: true, name };
 }
 
-/**
- * A path as a shell takes it, to put in a command someone, or an agent, will run: as it is when it
- * holds only characters no shell reads, else in single quotes, inside which neither a POSIX shell nor
- * PowerShell expands anything. A quote inside is closed and reopened as each shell spells it.
- */
-export function arg(path: string, platform: NodeJS.Platform = process.platform): string {
-  if (/^[A-Za-z0-9._/\\:@+~-]+$/.test(path)) return path;
-  return platform === "win32" ? `'${path.replaceAll("'", "''")}'` : `'${path.replaceAll("'", `'\\''`)}'`;
-}
+export { arg } from "./context.js";
 
 /** The same command again, with the flags it was run with and any added: never the name. */
 function rerun(options: KeysCreateOptions, target: { shown: string } | null, add: { replace?: boolean } = {}): string {
   const parts = ["npx haau3 keys create"];
   if (options.test) parts.push("--test");
-  if (options.file !== undefined && target) parts.push(`--file ${arg(target.shown)}`);
+  if (options.file !== undefined && target) parts.push(fileFlag(target.shown));
   if (options.replace || add.replace) parts.push("--replace");
   return parts.join(" ");
 }
@@ -261,7 +253,8 @@ export async function keysCreate(ctx: Context, options: KeysCreateOptions): Prom
   }
 
   const replaced = target.existing && options.replace ? { prefix: target.existing.prefix } : null;
-  const next = [WHOAMI_STEP];
+  // doctor reads the file a key went to: the defaults, or the one named with --file.
+  const next = [doctorStep(options.file !== undefined ? target.shown : undefined)];
   const data = {
     status: "created",
     key: { id: key.id, name: key.name, prefix: key.prefix, mode: key.mode },

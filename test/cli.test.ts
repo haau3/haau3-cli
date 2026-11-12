@@ -27,7 +27,7 @@ describe("help", () => {
       const out = await runCli([...args], { tty: true, env });
       const document = json(out.stdout);
       expect(out.code).toBe(0);
-      expect(document).toMatchObject({ formatVersion: "1.2", command: "help", ok: true, environment: null, error: null });
+      expect(document).toMatchObject({ formatVersion: "1.3", command: "help", ok: true, environment: null, error: null });
       expect(document.data).toEqual(HELP);
     }
   });
@@ -38,6 +38,8 @@ describe("help", () => {
 
   it("lists every command, and every variable the commands read", async () => {
     expect(HELP.commands.map((c) => c.name)).toEqual([
+      "doctor",
+      "doctor --file <file>",
       "login",
       "login --complete",
       "whoami",
@@ -48,9 +50,17 @@ describe("help", () => {
       "keys create --file <file>",
       "keys create --replace",
     ]);
-    expect(HELP.environment.map((e) => e.name)).toEqual(["HAAU3_OUTPUT", "HAAU3_PLATFORM_URL", "HAAU3_SESSION_STORE", "HAAU3_CONFIG_DIR"]);
+    expect(HELP.environment.map((e) => e.name)).toEqual([
+      "HAAU3_API_KEY",
+      "HAAU3_ENVIRONMENT",
+      "HAAU3_BASE_URL",
+      "HAAU3_OUTPUT",
+      "HAAU3_PLATFORM_URL",
+      "HAAU3_SESSION_STORE",
+      "HAAU3_CONFIG_DIR",
+    ]);
     const text = (await runCli(["--help"])).stdout;
-    expect(text).toContain("Commands:\n  login ");
+    expect(text).toContain("Commands:\n  doctor ");
     for (const entry of [...HELP.commands, ...HELP.environment]) expect(text).toContain(entry.description);
   });
 });
@@ -71,7 +81,7 @@ describe("version", () => {
   it("is a JSON document when asked for", async () => {
     const out = await runCli(["--version", "--json"], { tty: true });
     expect(json(out.stdout)).toEqual({
-      formatVersion: "1.2",
+      formatVersion: "1.3",
       cli: "haau3",
       cliVersion: VERSION,
       command: "version",
@@ -89,7 +99,7 @@ describe("a usage error", () => {
     expect(out.code).toBe(2);
     expect(out.stderr).toBe("");
     expect(json(out.stdout)).toEqual({
-      formatVersion: "1.2",
+      formatVersion: "1.3",
       cli: "haau3",
       cliVersion: VERSION,
       command: null,

@@ -1,6 +1,7 @@
 // Reads the arguments, picks the format and runs what was asked. Everything it prints goes through
 // here, so the output contract holds for every command.
 import { parseArgs, type ParseArgsOptionsConfig } from "node:util";
+import { doctor } from "./commands/doctor.js";
 import { keysCreate } from "./commands/keys.js";
 import { login } from "./commands/login.js";
 import { logout } from "./commands/logout.js";
@@ -38,6 +39,8 @@ export interface Io {
   /** Listens for Enter on stdin. Only used when a person is at a terminal. */
   enter?: () => { pressed: Promise<void>; stop(): void };
   openBrowser?: (url: string) => Promise<boolean>;
+  /** The fetch the API's client sends with. The global one by default. */
+  fetch?: typeof fetch;
 }
 
 const GLOBAL_OPTIONS = {
@@ -77,6 +80,8 @@ const COMMANDS = new Map<string, Command | Group>([
   ["whoami", { options: {}, run: (ctx) => whoami(ctx) }],
   ["logout", { options: {}, run: (ctx) => logout(ctx) }],
   ["keys", { sub: KEYS }],
+  // --file, not --env-file, for the reason keys create gives.
+  ["doctor", { options: { file: { type: "string" } }, run: (ctx, values) => doctor(ctx, { file: stringValue(values.file) }) }],
 ]);
 
 /** The options a command or a group takes: a group takes every one its commands do. */
@@ -202,6 +207,7 @@ function context(io: Io, format: Format): Context {
     },
     enter: interactive ? io.enter : undefined,
     openBrowser: interactive ? io.openBrowser : undefined,
+    fetch: io.fetch,
   };
 }
 
@@ -246,17 +252,16 @@ function usage(io: Io, format: Format, error: CliError, command: string | null =
 
 /**
  * One JSON document on stdout, or text: a result's text on stdout, an error and its next steps on
- * stderr.
+ * stderr. A failure has text only when its command reports what it found either way (doctor).
  */
 function write(io: Io, format: Format, document: Document, text: string): void {
   if (format === "json") {
     io.stdout.write(render(document));
     return;
   }
+  if (text) io.stdout.write(text);
   if (document.error) {
     const steps = document.error.next.map((step) => `  ${step.command}\n    ${step.description}`).join("\n");
     io.stderr.write(`${document.error.message}\n${steps ? `\nNext:\n${steps}\n` : ""}`);
-    return;
   }
-  if (text) io.stdout.write(text);
 }
