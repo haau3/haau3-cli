@@ -7,9 +7,10 @@
 // only as a hash and cannot be read back: a key made and then not written is a key nobody holds.
 //
 // Making a key ends the sign-in. The platform ends the approval before it makes the key, so a
-// sign-in someone else approved can never make more than the keys of that one moment. Once the key is
-// made, this computer's session is ended too, written or not: revoked from here as well, in case the
-// platform was one that did not, then deleted.
+// sign-in someone else approved can never make more than the keys of that one moment. Once a key may
+// have been made (any success, a failure from the platform, or no answer), this computer's session is
+// ended too, written or not: revoked from here as well, in case the platform was one that did not,
+// then deleted. A refusal (a 4xx) comes before the platform ends anything, so it keeps the session.
 import { basename, dirname, join, resolve } from "node:path";
 import { chooseFile, inspectFile, planFor, shownPath, standIn, writeKey, type Target } from "../envfile.js";
 import { resolvePlatform } from "../environment.js";
@@ -225,13 +226,18 @@ export async function keysCreate(ctx: Context, options: KeysCreateOptions): Prom
   }
   if (created.kind === "error") return fail(created.error);
   if (created.kind === "unknown") {
-    // A success the command line cannot use still made a key, and so ended the sign-in.
-    if (!created.signInEnded) return fail({ ...created.error, message: `${created.error.message}${madeText(created.made)}` });
+    // A key may exist, so the sign-in that asked for it may be spent: a success the command line cannot
+    // use certainly made a key and ended it; a failure or no answer may have come after the platform
+    // ended it. Either way it is ended here too, so the next step is a sign-in, not a session that may
+    // be dead. Anything else in the next steps (a newer haau3) comes first.
     await endHere();
+    const ended = created.signInEnded
+      ? "Making a key ended the sign-in, so sign in again before trying again."
+      : "Asking for a key may have ended the sign-in, so it is ended here too: sign in again before trying again.";
     return fail({
       ...created.error,
-      message: `${created.error.message}${madeText(created.made)} Making a key ended the sign-in, so sign in again before trying again.`,
-      next: [LOGIN_STEP, ...created.error.next],
+      message: `${created.error.message}${madeText(created.made)} ${ended}`,
+      next: [...created.error.next, LOGIN_STEP],
     });
   }
   const key = created.key;

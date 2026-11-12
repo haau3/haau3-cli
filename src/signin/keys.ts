@@ -33,8 +33,9 @@ export type CreateResult =
   /** The member is not in the session's organization, or picked none. */
   | { kind: "no-organization"; code: "not-a-member" | "no-organization"; problem: Problem }
   /**
-   * A key may exist: the platform made one and its answer could not be used, or no answer came.
-   * `signInEnded` when the platform answered with a success: it ends the sign-in before it makes a key.
+   * A key may exist: the platform made one and its answer could not be used, it failed, or no answer
+   * came. `signInEnded` when the platform answered with a success, which it gives only after ending the
+   * sign-in; otherwise the sign-in may or may not have ended.
    */
   | { kind: "unknown"; made: MadeKey | null; error: CliError; signInEnded: boolean }
   | { kind: "error"; error: CliError };
@@ -92,7 +93,7 @@ export async function createKey(platformURL: string, token: AccessToken, request
     return {
       kind: "unknown",
       made: null,
-      // The platform may have ended the sign-in before failing; if it did, the next command finds out.
+      // The platform may have ended the sign-in before failing.
       signInEnded: false,
       error: { ...unavailable, message: `${unavailable.message} It may have made a key anyway: look on the keys page at ${platformURL}/dashboard/keys before trying again, and revoke any you do not recognise.` },
     };
