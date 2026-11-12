@@ -97,10 +97,19 @@ const CODE = /^[a-z][a-z0-9-]{0,63}$/;
 /** The longest wait the command line repeats from Retry-After: a day. A longer one is not believed. */
 export const MAX_RETRY_AFTER_S = 86_400;
 
+/**
+ * Whether text holds a key: haau3's marker, or any run of the key sent, compared with case folded, since
+ * a name or a code can repeat a key in another case. Such text is never printed.
+ */
+export function showsKey(text: string, key: string | null): boolean {
+  if (/haau3[_-]sk[_-]/i.test(text)) return true;
+  return key !== null && holdsKey(text.toLowerCase(), key.trim().toLowerCase());
+}
+
 /** The API's own code on an error, when it is one the command line may repeat: never one holding the key. */
 function safeCode(error: Haau3Error, key: string | null): string | undefined {
   const code = error.code;
-  return code && CODE.test(code) && !(key && holdsKey(code, key)) ? code : undefined;
+  return code && CODE.test(code) && !showsKey(code, key) ? code : undefined;
 }
 
 /**
