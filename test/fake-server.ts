@@ -41,6 +41,11 @@ function leaks(secret: string): string[] {
 }
 export const NEW_KEY_MARKERS = [NEW_KEY_CORE, ...leaks(newKey("live")), ...leaks(newKey("test"))];
 
+/** The request id on every answer from the platform, successes included, as the platform sends one. */
+export const PLATFORM_REQUEST_ID = "req_fake_1";
+/** The request id on every answer from the sign-in service: never the platform's, so never kept. */
+export const SIGN_IN_SERVICE_REQUEST_ID = "req_signin_1";
+
 export type KeysAnswer =
   | "created"
   | "unauthorized"
@@ -59,7 +64,9 @@ export type KeysAnswer =
   | "long-prefix"
   | "key-in-problem"
   | "server-error"
-  | "ok-200";
+  | "ok-200"
+  /** A broken platform: a 201 the command line cannot use, the key in its request id. */
+  | "key-in-request-id";
 
 export type TokenAnswer =
   | "pending"
@@ -155,12 +162,14 @@ export class FakeServer {
     const path = new URL(req.url ?? "/", this.url).pathname;
     this.requests.push({ method: req.method ?? "", path, headers: req.headers, body });
     const form = new URLSearchParams(body);
+    const fromSignInService = path.startsWith("/issuer/") || path.startsWith("/.well-known/oauth-authorization-server/");
+    const requestId = { "X-Request-Id": fromSignInService ? SIGN_IN_SERVICE_REQUEST_ID : PLATFORM_REQUEST_ID };
     const json = (status: number, value: unknown, headers: Record<string, string> = {}) => {
-      res.writeHead(status, { "Content-Type": "application/json", ...headers });
+      res.writeHead(status, { "Content-Type": "application/json", ...requestId, ...headers });
       res.end(JSON.stringify(value));
     };
     const problem = (status: number, code: string, headers: Record<string, string> = {}) =>
-      json(status, { type: "about:blank", title: "Refused", status, detail: "Not today.", code }, { "X-Request-Id": "req_fake_1", ...headers });
+      json(status, { type: "about:blank", title: "Refused", status, detail: "Not today.", code }, headers);
 
     switch (path) {
       case "/.well-known/oauth-protected-resource/api/cli/v1": {
@@ -210,7 +219,7 @@ export class FakeServer {
         const answer = this.tokenAnswers[Math.min(this.#polls++, this.tokenAnswers.length - 1)]!;
         if (answer === "server-error") return json(502, {});
         if (answer === "rate-limited") {
-          res.writeHead(429, { "Retry-After": "30" });
+          res.writeHead(429, { "Retry-After": "30", ...requestId });
           res.end();
           return;
         }
@@ -233,7 +242,7 @@ export class FakeServer {
       case "/issuer/revoke": {
         this.revoked.push(form.get("token") ?? "");
         if (this.revokeStatus === 200 && form.get("token") === ACCESS_TOKEN) this.#live = false;
-        res.writeHead(this.revokeStatus);
+        res.writeHead(this.revokeStatus, requestId);
         res.end();
         return;
       }
@@ -289,6 +298,7 @@ export class FakeServer {
           secret: newKey(mode),
         };
         if (this.keysAnswer === "garbled") return json(201, { id: made.id, secret: made.secret });
+        if (this.keysAnswer === "key-in-request-id") return json(201, { id: made.id, secret: made.secret }, { "X-Request-Id": made.secret });
         if (this.keysAnswer === "wrong-mode") {
           const other = mode === "live" ? "test" : "live";
           return json(201, { ...made, secret: newKey(other), keyPrefix: newKeyPrefix(other) });
