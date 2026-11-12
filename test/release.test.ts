@@ -22,7 +22,7 @@ describe("the package", () => {
   });
 
   it("has two runtime dependencies, the SDK and the credential store's package, each pinned exactly", () => {
-    expect(pkg.dependencies).toEqual({ "@haau3/sdk": "0.4.1", "@napi-rs/keyring": "2.1.2" });
+    expect(pkg.dependencies).toEqual({ "@haau3/sdk": "0.4.2", "@napi-rs/keyring": "2.1.2" });
     expect(pkg.optionalDependencies).toBeUndefined();
     expect(pkg.peerDependencies).toBeUndefined();
   });

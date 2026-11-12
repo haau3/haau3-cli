@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@haau3/sdk':
-        specifier: 0.4.1
-        version: 0.4.1
+        specifier: 0.4.2
+        version: 0.4.2
       '@napi-rs/keyring':
         specifier: 2.1.2
         version: 2.1.2
@@ -258,8 +258,8 @@ packages:
     resolution: {integrity: sha512-IkO+/KEUvwbVpiURZg+P7zF74z5Jxe0UgJxVni+RtoHQ6IZieXaO02kmadomap/q+l6bc/jdPGGqTjhuZnuz1Q==}
     engines: {node: ^20.19.0 || ^22.13.0 || >=24}
 
-  '@haau3/sdk@0.4.1':
-    resolution: {integrity: sha512-s+C9+kwfkUx/L0WeOpjoTXPR62H0NHEWA+Fg3lFL7oeQ1LqbTntFcOKhvj8zIOYS5757Bt0FhCcNw6nPGa3xMg==}
+  '@haau3/sdk@0.4.2':
+    resolution: {integrity: sha512-vDvNfvK+Yv2doD7I/Q+5EhL87lI+jjK0CPqGo+kjXQS97m4euoK2L2qNfjlAe+pSVz5q+U7d12GHMtFkEKY3Tg==}
     engines: {node: '>=22'}
 
   '@humanfs/core@0.19.2':
@@ -1526,7 +1526,7 @@ snapshots:
       '@eslint/core': 1.2.1
       levn: 0.4.1
 
-  '@haau3/sdk@0.4.1':
+  '@haau3/sdk@0.4.2':
     dependencies:
       '@types/fhir': 0.0.44
 
