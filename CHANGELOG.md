@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.3](https://github.com/haau3/haau3-cli/compare/v0.1.2...v0.1.3) (2026-11-12)
+
+
+### Bug Fixes
+
+* errors built from the platform's answers keep its request id ([#8](https://github.com/haau3/haau3-cli/issues/8)) ([14aafa5](https://github.com/haau3/haau3-cli/commit/14aafa57a0707f4224cf08710411e26e56f7f8d1))
+
 ## [0.1.2](https://github.com/haau3/haau3-cli/compare/v0.1.1...v0.1.2) (2026-11-11)
 
 
