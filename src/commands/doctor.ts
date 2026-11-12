@@ -4,20 +4,36 @@
 // lets @haau3/sdk decide where a call goes, and proves it with two calls: /health, which needs no key,
 // and one read of the FHIR base's metadata, which counts toward no plan. It never prints a key, a
 // value it found under another name, or a response body.
-import { AuthError, ForbiddenError, Haau3, Haau3Error, NoAnswerError, RefusedError } from "@haau3/sdk";
+import type { Haau3 } from "@haau3/sdk";
 import { basename, dirname, join } from "node:path";
+import { CALL_TIMEOUT_MS, COLD_START, keyFacts, keyMayGo, NAMED, ownAddress, safeRequestId, sandboxNamed, sentence, shownBase, sortError } from "../calls.js";
+import { keylessClient, makeClient, namedEnvironment } from "../client.js";
 import { fileFlagError, printablePath, shownPath } from "../envfile.js";
-import { checkAddress, ENVIRONMENT_ADDRESSES, resolvePlatform, type Environment } from "../environment.js";
+import { ENVIRONMENT_ADDRESSES, resolvePlatform } from "../environment.js";
 import { gitAnswer } from "../git.js";
-import { modeOf, wellFormed, type KeyMode } from "../key.js";
-import { failure, success, EXIT, type NextStep, type Problem } from "../output.js";
+import type { KeyMode } from "../key.js";
+import { failure, success, EXIT, type NextStep } from "../output.js";
 import { DEFAULT_NODE_FLOOR, readProject, SDK_FLOORS, type Language, type Project } from "../project.js";
-import { BASE_URL_VARIABLE, ENVIRONMENT_VARIABLE, findSettings, KEY_VARIABLE, where, type EnvFile, type Found, type Settings } from "../settings.js";
-import { VERSION } from "../version.js";
+import { BASE_URL_VARIABLE, ENVIRONMENT_VARIABLE, findSettings, KEY_VARIABLE, where, type EnvFile, type Settings } from "../settings.js";
 import { holdsSecret } from "../signin/http.js";
 import { holdsKey } from "../signin/keys.js";
-import { arg, COMPLETE_STEP, doctorStep, fileFlag, KEYS_CREATE_STEP, LOGIN_STEP, misused, when, type Context, type Result } from "./context.js";
+import {
+  arg,
+  COMPLETE_STEP,
+  doctorStep,
+  KEYS_CREATE_STEP,
+  keysCreateStep,
+  LOGIN_STEP,
+  misused,
+  sandboxStep,
+  when,
+  type Context,
+  type Result,
+} from "./context.js";
 import { gitignoreLine } from "./keys.js";
+
+// Kept here as well, where doctor's tests and anything else that read them before find them.
+export { CALL_TIMEOUT_MS, shownBase };
 
 const COMMAND = "doctor";
 
@@ -42,16 +58,6 @@ export interface DoctorOptions {
   file: string | undefined;
 }
 
-/** How long each call may take: an instance of the API that was asleep can take up to about 30 s to start. */
-export const CALL_TIMEOUT_MS = 30_000;
-
-const COLD_START = "An instance of the API may have been starting, which can take up to about 30 seconds. Run this again.";
-
-const NAMED: Readonly<Record<Environment, string>> = { production: "production", sandbox: "the Sandbox" };
-
-/** A name as it starts a sentence: "the Sandbox" becomes "The Sandbox". */
-const sentence = (text: string) => `${text.charAt(0).toUpperCase()}${text.slice(1)}`;
-
 const check = (name: CheckName, status: CheckStatus, message: string, next: NextStep[] = [], details: Record<string, unknown> = {}): Check => ({
   name,
   status,
@@ -60,23 +66,6 @@ const check = (name: CheckName, status: CheckStatus, message: string, next: Next
   details,
 });
 const skip = (name: CheckName, waitsOn: CheckName, why: string): Check => check(name, "skip", `Waits on ${waitsOn}: ${why}`, [], { waitsOn });
-
-/** A command that reruns keys create with the same file, for a key that has to be made again. */
-function keysCreateStep(options: { test?: boolean; replace?: boolean; file?: string | undefined }, description: string): NextStep {
-  const parts = ["npx haau3 keys create"];
-  if (options.test) parts.push("--test");
-  if (options.file !== undefined) parts.push(fileFlag(options.file));
-  if (options.replace) parts.push("--replace");
-  return { command: parts.join(" "), description };
-}
-
-/** Setting the Sandbox as the environment, in this shell's own words. */
-function sandboxStep(platform: NodeJS.Platform): NextStep {
-  return {
-    command: platform === "win32" ? `$env:${ENVIRONMENT_VARIABLE} = "sandbox"` : `export ${ENVIRONMENT_VARIABLE}=sandbox`,
-    description: `Or call the Sandbox with no key: set ${ENVIRONMENT_VARIABLE}=sandbox where the app reads its settings, such as its env file.`,
-  };
-}
 
 // --- node and sdk --------------------------------------------------------------------------------
 
@@ -161,30 +150,6 @@ const KIND: Readonly<Record<KeyMode, string>> = {
   older: "a key made before live and test keys, for production; it does not work in the Sandbox",
   unrecognized: "not a haau3 key: it does not start with haau3_sk_, so haau3 will not send it, since it may be another service's secret",
 };
-
-interface KeyFacts {
-  mode: KeyMode;
-  wellFormed: boolean;
-  /** Something comes before haau3_sk_, such as a quote or "Bearer ". */
-  notAlone: boolean;
-  /** Only visible ASCII: a key that holds a line break or an invisible character cannot be sent. */
-  visible: boolean;
-  /** A haau3 key in visible ASCII: the only value doctor sends. */
-  sendable: boolean;
-}
-
-function keyFacts(found: Found): KeyFacts {
-  const value = found.value.trim();
-  const at = value.indexOf("haau3_sk_");
-  const key = at > 0 ? value.slice(at) : value;
-  const mode = modeOf(key);
-  const visible = /^[\x21-\x7e]+$/.test(key);
-  return { mode, wellFormed: at === 0 && wellFormed(value), notAlone: at > 0, visible, sendable: mode !== "unrecognized" && visible };
-}
-
-function sandboxNamed(settings: Settings): boolean {
-  return settings.environment?.value.trim().toLowerCase() === "sandbox";
-}
 
 const UNREADABLE: Readonly<Record<NonNullable<EnvFile["why"]>, string>> = {
   "not-a-file": "is not a file",
@@ -403,75 +368,6 @@ interface ClientAttempt {
   baseURL?: string | undefined;
 }
 
-/**
- * An address as doctor prints it: its origin, and `/…` when it has a path, which can carry a token of
- * a gateway's. haau3's own addresses have none.
- */
-export function shownBase(address: string): string {
-  const url = new URL(address);
-  return url.pathname && url.pathname !== "/" ? `${url.origin}/…` : url.origin;
-}
-
-/** Whether the client calls its environment's own address: haau3's, not a stand-in's or a proxy's. */
-function ownAddress(client: Haau3): boolean {
-  return client.baseURL === ENVIRONMENT_ADDRESSES[client.environment];
-}
-
-const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
-
-/**
- * Where doctor sends a key: haau3's own two addresses, or this computer (owner, 2026-11-12). A base URL
- * can come from a committed env file, so a project someone else wrote could otherwise collect the key
- * from your shell; any other host is checked with no key.
- */
-function keyMayGo(client: Haau3): boolean {
-  const { origin, hostname } = new URL(client.baseURL);
-  return origin === ENVIRONMENT_ADDRESSES.production || origin === ENVIRONMENT_ADDRESSES.sandbox || LOOPBACK.has(hostname);
-}
-
-function clientOptions(ctx: Context) {
-  return { fetch: ctx.fetch, timeout: CALL_TIMEOUT_MS, maxRetries: 0, appInfo: { name: "haau3-cli", version: VERSION } };
-}
-
-/** The SDK's refusal of these settings, in doctor's words, naming each variable and where it is. */
-function refusalMessage(code: string | undefined, settings: Settings): { message: string; next: NextStep[] } {
-  const key = settings.key ? `${KEY_VARIABLE} ${where(settings.key)}` : KEY_VARIABLE;
-  const environment = settings.environment ? `${ENVIRONMENT_VARIABLE} ${where(settings.environment)}` : ENVIRONMENT_VARIABLE;
-  const base = settings.baseURL ? `${BASE_URL_VARIABLE} ${where(settings.baseURL)}` : BASE_URL_VARIABLE;
-  const file = settings.key?.path ? settings.key.source : undefined;
-  const sandboxCause = sandboxNamed(settings) ? `${environment} names the Sandbox` : `${base} is the Sandbox's address`;
-  switch (code) {
-    case "api-key-not-alone":
-      return { message: `${key} has something before its haau3_sk_ prefix, such as quotes or "Bearer ". Set the key alone.`, next: [] };
-    case "test-key-outside-sandbox":
-      return {
-        message: `${key} is a test key, which works only in the Sandbox, and ${environment} names production. Remove ${ENVIRONMENT_VARIABLE} to call the Sandbox with it, or use a live key.`,
-        next: [keysCreateStep({ replace: true, file }, "Make a live key in place of the test key.")],
-      };
-    case "live-key-in-sandbox":
-      return {
-        message: `${key} is a live key, which does not work in the Sandbox, and ${sandboxCause}. Use a test key there.`,
-        next: [keysCreateStep({ test: true, replace: true, file }, "Make a test key in place of the live key.")],
-      };
-    case "older-key-in-sandbox":
-      return {
-        message: `${key} was made before live and test keys, so it does not work in the Sandbox, and ${sandboxCause}. Use a test key there.`,
-        next: [keysCreateStep({ test: true, replace: true, file }, "Make a test key in place of the older key.")],
-      };
-    case "invalid-environment":
-      return { message: `${environment} is neither production nor sandbox.`, next: [] };
-    case "invalid-base-url":
-      return { message: `${base} is not an http or https address with a host.`, next: [] };
-    case "environment-conflicts-with-base-url":
-      return { message: `${environment} names one environment, and ${base} is the other's own address. Name one environment, or remove one of them.`, next: [] };
-    default:
-      return {
-        message: `haau3 could not make the SDK's client${code ? ` (${code})` : ""}.`,
-        next: [{ command: "npx haau3@latest --version", description: "Check for a newer version, then report it at https://github.com/haau3/haau3-cli/issues." }],
-      };
-  }
-}
-
 function settingsCheck(ctx: Context, settings: Settings): ClientAttempt {
   const details: Record<string, unknown> = {
     environment: settings.environment ? { source: settings.environment.source } : null,
@@ -479,39 +375,19 @@ function settingsCheck(ctx: Context, settings: Settings): ClientAttempt {
   };
   const fail = (message: string, next: NextStep[] = []): ClientAttempt => ({ check: check("settings", "fail", message, next, details), client: null, noKey: false });
 
-  // The command line's own rule for an address it is given, before the SDK's: https, or http on this
-  // computer, with nothing that could be a credential in it. The key is never sent anywhere else.
-  let baseURL: string | undefined;
-  if (settings.baseURL) {
-    const named = `${BASE_URL_VARIABLE} ${where(settings.baseURL)}`;
-    const keyIn = (text: string) => KEY_MARKER.test(text) || (settings.key !== null && holdsKey(text, settings.key.value.trim()));
-    const holdsAKey = () => fail(`${named} holds what looks like an API key, so haau3 will not use it. Remove it, and put the key in ${KEY_VARIABLE}.`);
-    if (keyIn(settings.baseURL.value)) return holdsAKey();
-    const checked = checkAddress(settings.baseURL.value);
-    if (!checked.ok) return fail(`${named} ${checked.why}, so haau3 will not send a request there. Remove it to call the API at its own address.`);
-    // Checked again as parsed: a URL's parser drops line breaks and tabs, which can split a key's marker.
-    if (keyIn(checked.address)) return holdsAKey();
-    baseURL = checked.address;
-  }
-  const named = settings.environment?.value.trim().toLowerCase();
+  // The command line's own rule for an address it is given comes first, then the SDK's (src/client.ts).
+  const made = makeClient(ctx, settings);
+  if (!made.ok && made.why === "address") return fail(made.message);
+  const named = namedEnvironment(settings);
   if (named !== undefined) (details.environment as Record<string, unknown>).value = named === "production" || named === "sandbox" ? named : null;
-
-  let client: Haau3;
-  try {
-    client = new Haau3({
-      // An empty key, never undefined, so the SDK reads no key of its own from the environment.
-      apiKey: settings.key?.value ?? "",
-      environment: named as Environment | undefined,
-      baseURL,
-      ...clientOptions(ctx),
-    });
-  } catch (error) {
-    const code = error instanceof Haau3Error ? error.code : undefined;
-    if (code === "no-api-key") return { check: skip("settings", "key", "with no key and the Sandbox not named, the SDK makes no client."), client: null, noKey: true, baseURL };
-    const { message, next } = refusalMessage(code, settings);
-    details.refused = code ?? null;
-    return fail(message, next);
+  if (!made.ok && made.why === "no-key") {
+    return { check: skip("settings", "key", "with no key and the Sandbox not named, the SDK makes no client."), client: null, noKey: true, baseURL: made.baseURL };
   }
+  if (!made.ok) {
+    details.refused = made.why === "refused" ? made.code : null;
+    return fail(made.why === "refused" ? made.message : "", made.why === "refused" ? made.next : []);
+  }
+  const { client, baseURL } = made;
 
   details.client = { environment: client.environment, baseURL: shownBase(client.baseURL) };
   const own = ENVIRONMENT_ADDRESSES[client.environment];
@@ -533,38 +409,8 @@ function settingsCheck(ctx: Context, settings: Settings): ClientAttempt {
 
 // --- the calls -----------------------------------------------------------------------------------
 
-/**
- * A request id as the API sends it, a UUID, or nothing: an answer from anything else could carry
- * whatever it was sent, the key included, in that header.
- */
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-function safeRequestId(id: string | undefined): string | null {
-  return id !== undefined && UUID.test(id) ? id : null;
-}
-
-/** A code the API names, as the command line repeats one: short, kebab-case, never a key. */
-const CODE = /^[a-z][a-z0-9-]{0,63}$/;
-
 /** The 403 codes doctor names in words; any other is in the details only. */
 const KNOWN_403 = new Set(["test-key-outside-sandbox", "live-key-in-sandbox", "phi-agreement-required"]);
-
-/** The longest wait doctor repeats from Retry-After: a day. A longer one is not believed. */
-const MAX_RETRY_AFTER_S = 86_400;
-
-/**
- * An answer's status, code and request id, in the shape every error of the command line carries.
- * Never its body, and never a code that holds any part of the key sent.
- */
-function problemOf(error: unknown, key: string | null): Problem | undefined {
-  if (!(error instanceof Haau3Error)) return undefined;
-  const status = (error as { status?: unknown }).status;
-  if (typeof status !== "number") return undefined;
-  const problem: Problem = { type: "about:blank", title: `HTTP ${status}`, status };
-  if (error instanceof ForbiddenError && error.code && CODE.test(error.code) && !(key && holdsKey(error.code, key))) problem.code = error.code;
-  const requestId = safeRequestId(error.requestId);
-  if (requestId) problem.requestId = requestId;
-  return problem;
-}
 
 async function reachableCheck(client: Haau3, rerun: NextStep): Promise<Check> {
   const host = shownBase(client.baseURL);
@@ -580,15 +426,15 @@ async function reachableCheck(client: Haau3, rerun: NextStep): Promise<Check> {
     }
     return check("reachable", "fail", `${host} answered /health with ${answer.status}, so this may not be the haau3 API.`, [rerun], details);
   } catch (error) {
-    if (error instanceof NoAnswerError) {
-      const details = { host, reason: error.reason, detail: error.detail ?? null };
-      if (error.reason === "network") {
-        return check("reachable", "fail", `Could not reach ${host}${error.detail ? ` (${error.detail})` : ""}. Check the network, a proxy or a firewall.`, [rerun], details);
+    const sorted = sortError(error, null);
+    if (sorted.reason !== undefined) {
+      const details = { host, reason: sorted.reason, detail: sorted.detail ?? null };
+      if (sorted.answer === "unreachable") {
+        return check("reachable", "fail", `Could not reach ${host}${sorted.detail ? ` (${sorted.detail})` : ""}. Check the network, a proxy or a firewall.`, [rerun], details);
       }
-      return check("reachable", "fail", `No answer from ${host} (${error.reason}). ${COLD_START}`, [rerun], details);
+      return check("reachable", "fail", `No answer from ${host} (${sorted.reason}). ${COLD_START}`, [rerun], details);
     }
-    const name = error instanceof Error ? error.name : "an error";
-    return check("reachable", "fail", `haau3 could not call ${host} (${name}).`, [rerun], { host });
+    return check("reachable", "fail", `haau3 could not call ${host} (${sorted.name ?? "an error"}).`, [rerun], { host });
   }
 }
 
@@ -620,14 +466,16 @@ async function keyWorksCheck({ client, settings, mode, file, rerun }: KeyWorksIn
     if (!withKey) return check("key-works", "pass", `${sentence(NAMED[client.environment])} answered with no key, in ${durationMs} ms.`, [], details);
     return check("key-works", "pass", `The API took the key: ${NAMED[client.environment]} answered in ${durationMs} ms.`, [], details);
   } catch (error) {
-    const problem = problemOf(error, settings.key?.value.trim() ?? null);
+    const sorted = sortError(error, settings.key?.value.trim() ?? null);
+    const problem = sorted.problem;
+    const status = problem?.status;
     const details: Record<string, unknown> = { withKey, problem: problem ?? null };
-    if (error instanceof NoAnswerError) Object.assign(details, { reason: error.reason, detail: error.detail ?? null });
-    if (error instanceof AuthError) {
+    if (sorted.reason !== undefined) Object.assign(details, { reason: sorted.reason, detail: sorted.detail ?? null });
+    if (sorted.answer === "bad-key") {
       if (!withKey) return check("key-works", "fail", `${host} refused a call with no key (401).`, [LOGIN_STEP, KEYS_CREATE_STEP], details);
       return check("key-works", "fail", "The API did not take the key (401): it is not one the API knows, or it was revoked.", [remake("Make a new key in place of it.")], details);
     }
-    if (error instanceof ForbiddenError) {
+    if (status === 403) {
       const code = problem?.code;
       const why =
         code === "test-key-outside-sandbox"
@@ -639,9 +487,9 @@ async function keyWorksCheck({ client, settings, mode, file, rerun }: KeyWorksIn
       const said = withKey ? `${who} took the key but refused the call (403)` : `${who} refused a call with no key (403)`;
       return check("key-works", "fail", `${said}: ${why}.`, [], details);
     }
-    if (error instanceof NoAnswerError) {
-      if (error.reason === "rate-limited") {
-        const wait = error.retryAfter !== undefined && Number.isFinite(error.retryAfter) && error.retryAfter <= MAX_RETRY_AFTER_S ? error.retryAfter : undefined;
+    if (sorted.reason !== undefined) {
+      if (sorted.answer === "over-a-limit") {
+        const wait = sorted.retryAfter;
         const later = wait !== undefined ? ` It says to try again in ${wait} s.` : "";
         if (!withKey) {
           return check(
@@ -654,19 +502,18 @@ async function keyWorksCheck({ client, settings, mode, file, rerun }: KeyWorksIn
         }
         return check("key-works", "warn", `Over a limit (429), so the key was not proven.${later}`, [rerun], { ...details, retryAfter: wait ?? null });
       }
-      if (error.reason === "unreadable") {
+      if (sorted.answer === "unreadable") {
         return check("key-works", "fail", `${host} answered metadata with something that is not a FHIR CapabilityStatement, so it may not be the haau3 API.`, [], details);
       }
-      if (error.reason === "network") {
-        return check("key-works", "fail", `Could not reach ${host}${error.detail ? ` (${error.detail})` : ""}.`, [rerun], details);
+      if (sorted.answer === "unreachable") {
+        return check("key-works", "fail", `Could not reach ${host}${sorted.detail ? ` (${sorted.detail})` : ""}.`, [rerun], details);
       }
-      return check("key-works", "fail", `No answer from ${host} (${error.reason}${error.status ? `, ${error.status}` : ""}). ${COLD_START}`, [rerun], details);
+      return check("key-works", "fail", `No answer from ${host} (${sorted.reason}${status ? `, ${status}` : ""}). ${COLD_START}`, [rerun], details);
     }
-    if (error instanceof RefusedError) {
-      return check("key-works", "fail", `${host} refused the metadata read (${error.status}), so it may not be the haau3 API.`, [], details);
+    if (sorted.answer === "refused" || sorted.answer === "not-the-example") {
+      return check("key-works", "fail", `${host} refused the metadata read (${status}), so it may not be the haau3 API.`, [], details);
     }
-    const name = error instanceof Error ? error.name : "an error";
-    return check("key-works", "fail", `haau3 could not read metadata (${name}).`, [], details);
+    return check("key-works", "fail", `haau3 could not read metadata (${sorted.name ?? "an error"}).`, [], details);
   }
 }
 
@@ -774,12 +621,7 @@ export async function doctor(ctx: Context, options: DoctorOptions): Promise<Resu
     settings.environment?.value.trim().toLowerCase() === "production" || (attempt.baseURL !== undefined && new URL(attempt.baseURL).origin === production);
   let probe = keyKept ? null : attempt.client;
   if (!probe && (keyKept || (attempt.noKey && !namesProduction))) {
-    try {
-      // To HAAU3_BASE_URL as checked, never the SDK's own read of the environment.
-      probe = new Haau3({ apiKey: "", environment: "sandbox", baseURL: attempt.baseURL, ...clientOptions(ctx) });
-    } catch {
-      probe = null;
-    }
+    probe = keylessClient(ctx, attempt.baseURL);
   }
   const rerun = doctorStep(options.file);
   const reachable = probe
