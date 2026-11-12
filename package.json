@@ -1,6 +1,6 @@
 {
   "name": "haau3",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "The command line for the haau3 platform API, for developers and their coding agents. Readable text at a terminal, one versioned JSON document everywhere else.",
   "license": "MIT",
   "homepage": "https://docs.haau3.com",
