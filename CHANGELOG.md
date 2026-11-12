@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.5](https://github.com/haau3/haau3-cli/compare/v0.1.4...v0.1.5) (2026-11-12)
+
+
+### Bug Fixes
+
+* doctor's no-key Sandbox answer starts with a capital ([#12](https://github.com/haau3/haau3-cli/issues/12)) ([c2ee298](https://github.com/haau3/haau3-cli/commit/c2ee298cce7c1ad3c36812a81e5d772095615cf8))
+
 ## [0.1.4](https://github.com/haau3/haau3-cli/compare/v0.1.3...v0.1.4) (2026-11-12)
 
 
