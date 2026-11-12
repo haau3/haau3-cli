@@ -204,6 +204,19 @@ describe("every answer, sorted", () => {
     for (const s of sent) expect(s.url.origin).toBe(PRODUCTION);
   });
 
+  it("sorts the Sandbox's not-the-example by its code, from the FHIR base and from a problem", async () => {
+    const notTheExample = {
+      resourceType: "OperationOutcome",
+      issue: [{ severity: "error", code: "business-rule", details: { coding: [{ system: "https://haau3.com/fhir/CodeSystem/sandbox-error", code: "not-the-example" }] } }],
+    };
+    for (const respond of [() => fhir(400, notTheExample), () => json(400, { type: "about:blank", title: "Invalid request", status: 400, code: "not-the-example" })]) {
+      const { fetch } = api(PASSING, (url) => (url.pathname === "/openapi.json" ? json(200, PASSING) : respond()));
+      const { document } = await run(["lookups"], { env: { HAAU3_API_KEY: TEST }, fetch });
+      expect(document.data.calls[0]).toMatchObject({ status: "fail", answer: "not-the-example" });
+      expect(document.data.calls[0].details.problem.code).toBe("not-the-example");
+    }
+  });
+
   it("stops at a 429 and lists the rest as not run", async () => {
     const { fetch, sent } = api();
     const { document } = await run(["slow-down", "--all"], { env: { HAAU3_API_KEY: LIVE }, fetch });
