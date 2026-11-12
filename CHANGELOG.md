@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.4](https://github.com/haau3/haau3-cli/compare/v0.1.3...v0.1.4) (2026-11-12)
+
+
+### Features
+
+* haau3 doctor ([#10](https://github.com/haau3/haau3-cli/issues/10)) ([df7c8e4](https://github.com/haau3/haau3-cli/commit/df7c8e4fcc858005c1ad0c5db9e30f47aefaf9bd))
+
 ## [0.1.3](https://github.com/haau3/haau3-cli/compare/v0.1.2...v0.1.3) (2026-11-12)
 
 
