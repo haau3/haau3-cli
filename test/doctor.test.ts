@@ -212,7 +212,7 @@ describe("a project that is ready", () => {
 });
 
 describe("no key", () => {
-  it("fails, naming where it looked, with login, keys create and the Sandbox as the remedies, and still checks the network on the Sandbox", async () => {
+  it("fails, naming where it looked, with the Sandbox, then login and keys create as the remedies, and still checks the network on the Sandbox", async () => {
     nodeProject();
     const stand = api();
     const { out, document, checks } = await report({ fetch: stand.fetch });
@@ -223,11 +223,15 @@ describe("no key", () => {
     expect(document.data).toMatchObject({ ready: false, environment: null, baseURL: null });
     expect(checks.key.status).toBe("fail");
     expect(checks.key.message).toContain("No API key: HAAU3_API_KEY is not set in the environment, .env.local or .env (.env.local does not exist; .env does not exist).");
+    // The Sandbox first, with no key: a first call needs no account, then a live key needs a sign-in.
     expect(checks.key.next.map((s) => s.command)).toEqual([
+      process.platform === "win32" ? '$env:HAAU3_ENVIRONMENT = "sandbox"' : "export HAAU3_ENVIRONMENT=sandbox",
       "npx haau3 login",
       "npx haau3 keys create",
-      process.platform === "win32" ? '$env:HAAU3_ENVIRONMENT = "sandbox"' : "export HAAU3_ENVIRONMENT=sandbox",
     ]);
+    expect(checks.key.next[0]!.description).toBe(
+      "Call the Sandbox with no key: set HAAU3_ENVIRONMENT=sandbox where the app reads its settings, such as its env file.",
+    );
     expect(checks.settings).toMatchObject({ status: "skip", details: { waitsOn: "key" } });
     expect(checks.reachable.status).toBe("pass");
     expect(checks["key-works"]).toMatchObject({ status: "skip", details: { waitsOn: "key" } });
@@ -242,7 +246,8 @@ describe("no key", () => {
     const out = await doctor({ tty: true });
     expect(out.code).toBe(1);
     expect(out.stdout).toContain("  fail  key               No API key");
-    expect(out.stderr.startsWith("Not ready: 1 check failed (key).\n\nNext:\n  npx haau3 login\n")).toBe(true);
+    const sandbox = process.platform === "win32" ? '$env:HAAU3_ENVIRONMENT = "sandbox"' : "export HAAU3_ENVIRONMENT=sandbox";
+    expect(out.stderr.startsWith(`Not ready: 1 check failed (key).\n\nNext:\n  ${sandbox}\n`)).toBe(true);
   });
 });
 
@@ -272,7 +277,7 @@ describe("where the settings are found", () => {
     expect(checks.key.details).toMatchObject({ source: join("config", "prod.env"), mode: "test" });
     const missing = await report({ args: ["--file", "other.env"] });
     expect(missing.checks.key.message).toContain("not set in the environment or other.env (other.env does not exist).");
-    expect(missing.checks.key.next[1]!.command).toBe("npx haau3 keys create --file other.env");
+    expect(missing.checks.key.next[2]!.command).toBe("npx haau3 keys create --file other.env");
     const refused = await doctor({ args: ["--file", "notes.txt"] });
     expect(refused.code).toBe(2);
     expect(JSON.parse(refused.stdout)).toMatchObject({ ok: false, data: null, error: { code: "invalid-file" } });

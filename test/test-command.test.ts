@@ -321,7 +321,9 @@ describe("where calls go, and with which key", () => {
     expect(document.environment).toBe("sandbox");
     expect(document.data.keySent).toBe(false);
     expect(document.data.setup.message).toMatch(/^No API key was found, so this ran in the Sandbox with no key\./);
-    expect(document.data.setup.next.map((s: any) => s.command)).toEqual(["npx haau3 login", "npx haau3 keys create", expect.stringMatching(/HAAU3_ENVIRONMENT/)]);
+    // The Sandbox first: the app can call it as it is, with HAAU3_ENVIRONMENT set; a live key takes a sign-in.
+    expect(document.data.setup.next.map((s: any) => s.command)).toEqual([expect.stringMatching(/HAAU3_ENVIRONMENT/), "npx haau3 login", "npx haau3 keys create"]);
+    expect(document.data.setup.message).toContain("set HAAU3_ENVIRONMENT=sandbox where it reads its settings, or sign in and make a key.");
     for (const s of sent) {
       expect(s.url.origin).toBe(SANDBOX);
       expect(s.headers.get("authorization")).toBeNull();
@@ -344,6 +346,8 @@ describe("where calls go, and with which key", () => {
     expect(code).toBe(1);
     expect(document.error.code).toBe("no-key");
     expect(sent).toHaveLength(0);
+    // Production named on purpose: a key for it first, and the Sandbox last.
+    expect(document.error.next.map((s: any) => s.command)).toEqual(["npx haau3 login", "npx haau3 keys create", expect.stringMatching(/HAAU3_ENVIRONMENT/)]);
   });
 
   it("with no key, --all needs a service named, and sends nothing until it has one", async () => {

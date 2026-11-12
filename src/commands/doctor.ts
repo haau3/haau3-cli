@@ -234,7 +234,7 @@ function keyCheck(settings: Settings, file: string | undefined, platform: NodeJS
     "key",
     "fail",
     `No API key: ${why}${elsewhere}`,
-    [LOGIN_STEP, file === undefined ? KEYS_CREATE_STEP : keysCreateStep({ file }, KEYS_CREATE_STEP.description), sandboxStep(platform)],
+    [sandboxStep(platform), LOGIN_STEP, file === undefined ? KEYS_CREATE_STEP : keysCreateStep({ file }, KEYS_CREATE_STEP.description)],
     { status: "not-found", looked: lookedIn, ...(settings.unloadedKey ? { unloaded: settings.unloadedKey.source } : {}) },
   );
 }

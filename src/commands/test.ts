@@ -511,8 +511,8 @@ export async function test(ctx: Context, options: TestOptions): Promise<Result> 
     const ran = sandboxNoKey ? "in the Sandbox" : `at ${host}`;
     setup = {
       status: "warn",
-      message: `No API key was found, so this ran ${ran} with no key. Your app, as set up, makes no client: sign in and make a key, or set ${ENVIRONMENT_VARIABLE}=sandbox where it reads its settings.`,
-      next: [LOGIN_STEP, options.file === undefined ? KEYS_CREATE_STEP : keysCreateStep({ file: options.file }, KEYS_CREATE_STEP.description), sandboxStep(process.platform)],
+      message: `No API key was found, so this ran ${ran} with no key. Your app, as set up, makes no client: set ${ENVIRONMENT_VARIABLE}=sandbox where it reads its settings, or sign in and make a key.`,
+      next: [sandboxStep(process.platform), LOGIN_STEP, options.file === undefined ? KEYS_CREATE_STEP : keysCreateStep({ file: options.file }, KEYS_CREATE_STEP.description)],
     };
   } else if (setupWhy === "key-kept") {
     setup = {
