@@ -49,6 +49,9 @@ const COLD_START = "An instance of the API may have been starting, which can tak
 
 const NAMED: Readonly<Record<Environment, string>> = { production: "production", sandbox: "the Sandbox" };
 
+/** A name as it starts a sentence: "the Sandbox" becomes "The Sandbox". */
+const sentence = (text: string) => `${text.charAt(0).toUpperCase()}${text.slice(1)}`;
+
 const check = (name: CheckName, status: CheckStatus, message: string, next: NextStep[] = [], details: Record<string, unknown> = {}): Check => ({
   name,
   status,
@@ -614,7 +617,7 @@ async function keyWorksCheck({ client, settings, mode, file, rerun }: KeyWorksIn
       // Another address answered: it took the call, which proves nothing about the key at haau3.
       return check("key-works", "warn", `${host} answered metadata in ${durationMs} ms. It is not ${NAMED[client.environment]}'s own address, so the key is not proven at haau3.`, [], details);
     }
-    if (!withKey) return check("key-works", "pass", `${NAMED[client.environment]} answered with no key, in ${durationMs} ms.`, [], details);
+    if (!withKey) return check("key-works", "pass", `${sentence(NAMED[client.environment])} answered with no key, in ${durationMs} ms.`, [], details);
     return check("key-works", "pass", `The API took the key: ${NAMED[client.environment]} answered in ${durationMs} ms.`, [], details);
   } catch (error) {
     const problem = problemOf(error, settings.key?.value.trim() ?? null);
