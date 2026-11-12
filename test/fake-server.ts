@@ -15,6 +15,9 @@ export const DEVICE_CODE = `${CORE}devicecode`;
 export const USER_CODE = "WDJB-MJHT";
 export const SIGN_IN_MARKERS = [ACCESS_TOKEN, REFRESH_TOKEN, DEVICE_CODE, CORE];
 
+/** An example's query value in the stand-in's spec: test sends it, and no output may hold it. */
+export const QUERY_MARKER = ["QUERY", "MARKER", "c81f2a"].join("");
+
 /**
  * The new key's secret. Its first six characters after the mode's prefix are plain, as the prefix the
  * keys page shows; the marker comes straight after, so anything printed past the prefix is caught.
@@ -320,22 +323,37 @@ export class FakeServer {
       }
       case "/health":
         return json(200, { status: "ok" });
-      case "/openapi.json":
-        // For test: one service, the FHIR base's metadata, which answers as apiAnswer says.
+      case "/openapi.json": {
+        // For test: one service, the FHIR base's metadata, which answers as apiAnswer says. With echo,
+        // the spec repeats the key sent in every name it has, in upper and lower case, and adds an
+        // operation whose example query value is a marker no output may hold.
+        const sent = String(req.headers.authorization ?? "").replace(/^Bearer /, "");
+        const alnum = sent.split("_").slice(3).join("").replace(/[^A-Za-z0-9]/g, "") || "none";
+        const echo = this.apiAnswer === "echo";
+        const ok = (type: string) => ({ "200": { description: "ok", content: { "application/fhir+json": { schema: { $ref: `#/components/schemas/${type}` } } } } });
         return json(200, {
           openapi: "3.1.0",
-          info: { title: "API", version: "1.0.0-preview.1" },
+          info: { title: "API", version: echo ? alnum.slice(0, 40) : "1.0.0-preview.1" },
           tags: [{ name: "FHIR base" }],
+          // With echo, the marker's operation comes first: metadata's 401 then stops the run.
           paths: {
-            "/v1/fhir/r4/metadata": {
-              get: {
-                tags: ["FHIR base"],
-                operationId: "fhirMetadata",
-                responses: { "200": { description: "ok", content: { "application/fhir+json": { schema: { $ref: "#/components/schemas/CapabilityStatement" } } } } },
-              },
-            },
+            ...(echo
+              ? {
+                  "/v1/fhir/r4/Echo": {
+                    get: { tags: ["FHIR base"], operationId: "echoQuery", parameters: [{ in: "query", name: alnum, example: QUERY_MARKER }], responses: ok("Bundle") },
+                  },
+                  [`/v1/fhir/r4/${alnum.toLowerCase()}`]: { get: { tags: ["FHIR base"], operationId: alnum.toUpperCase(), responses: ok(`X${alnum.toLowerCase()}`) } },
+                }
+              : {}),
+            "/v1/fhir/r4/metadata": { get: { tags: ["FHIR base"], operationId: "fhirMetadata", responses: ok("CapabilityStatement") } },
           },
         });
+      }
+      case "/v1/fhir/r4/Echo":
+        // The marker's operation, answered, so what test makes of a success is checked too.
+        res.writeHead(200, { "Content-Type": "application/fhir+json; fhirVersion=4.0", ...requestId });
+        res.end(JSON.stringify({ resourceType: "Bundle", type: "searchset", entry: [{ search: { mode: "match" } }] }));
+        return;
       case "/v1/fhir/r4/metadata": {
         const fhir = (status: number, value: unknown, headers: Record<string, string> = {}) => {
           res.writeHead(status, { "Content-Type": "application/fhir+json; fhirVersion=4.0", ...requestId, ...headers });
@@ -347,7 +365,8 @@ export class FakeServer {
         if (this.apiAnswer === "unavailable") return fhir(503, outcome("transient", "Starting."));
         if (this.apiAnswer === "echo") {
           const sent = String(req.headers.authorization ?? "");
-          return fhir(401, outcome("security", `You sent ${sent}`), { "X-Request-Id": sent.replace(/^Bearer /, "") || "none" });
+          const key = sent.replace(/^Bearer /, "") || "none";
+          return fhir(401, outcome("security", `You sent ${sent}`), { "X-Request-Id": key, "X-Correlation-Id": key, "Retry-After": key });
         }
         return fhir(200, { resourceType: "CapabilityStatement", status: "active" });
       }

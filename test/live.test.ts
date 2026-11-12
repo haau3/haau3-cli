@@ -25,9 +25,13 @@ describe.skipIf(!LIVE)("each host's published spec builds every operation's exam
       const spec = readSpec(await read(`${host}/openapi.json`));
       if (!spec.ok) throw new Error(spec.why);
       expect(spec.version).toMatch(/^1\.0\.0-preview\.\d+$/);
-      expect(spec.unbuildable).toEqual([]);
+      expect(spec.skipped).toBe(0);
       expect(spec.services.length).toBeGreaterThanOrEqual(9);
-      for (const service of spec.services) expect(service.operations.length, service.name).toBeGreaterThan(0);
+      for (const service of spec.services) {
+        const unbuildable = service.operations.filter((o) => o.kind === "unbuildable");
+        expect(unbuildable, service.name).toEqual([]);
+        expect(service.operations.length, service.name).toBeGreaterThan(0);
+      }
     });
   }
 });
