@@ -19,6 +19,7 @@ import {
   FakeServer,
   NEW_KEY_CORE,
   NEW_KEY_MARKERS,
+  QUERY_MARKER,
   newKey,
   REFRESH_TOKEN,
   SIGN_IN_MARKERS,
@@ -34,11 +35,16 @@ const IN_ENVIRONMENT = ["haau3", "sk", "live", `${CORE}env`].join("_");
 const IN_ENV_LOCAL = ["haau3", "sk", "test", `${CORE}local`].join("_");
 const IN_ENV = ["haau3", "sk", "live", `${CORE}dotenv`].join("_");
 const NEIGHBOUR = ["PLANTED", "NEIGHBOUR", "e41b07"].join("");
-const PLANTED = [IN_ENVIRONMENT, IN_ENV_LOCAL, IN_ENV, CORE, NEIGHBOUR, ...SIGN_IN_MARKERS, ...NEW_KEY_MARKERS];
+const PLANTED = [IN_ENVIRONMENT, IN_ENV_LOCAL, IN_ENV, CORE, NEIGHBOUR, QUERY_MARKER, ...SIGN_IN_MARKERS, ...NEW_KEY_MARKERS];
 
-/** Throws, without repeating it, when `text` holds anything planted. */
+/**
+ * Throws, without repeating it, when `text` holds anything planted: in any case, and with its
+ * separators changed, since a command could repeat a secret lower-cased or hyphenated.
+ */
 function assertClean(text: string, where: string): void {
-  const hit = PLANTED.findIndex((planted) => text.includes(planted));
+  const fold = (s: string) => s.toLowerCase().replace(/[-_ ]/g, "");
+  const folded = fold(text);
+  const hit = PLANTED.findIndex((planted) => folded.includes(fold(planted)));
   if (hit !== -1) throw new Error(`${where} shows planted secret number ${hit}`);
 }
 
@@ -91,6 +97,14 @@ const COMMANDS: [string, string[]][] = [
   ["the key after doctor", ["doctor", IN_ENVIRONMENT]],
   ["the key as doctor's --file", ["doctor", "--file", IN_ENVIRONMENT]],
   ["the key as doctor's env file's name", ["doctor", "--file", `.env${IN_ENVIRONMENT}`]],
+  ["test", ["test"]],
+  ["test a service", ["test", "fhir-base"]],
+  ["test --all", ["test", "fhir-base", "--all"]],
+  ["test --file", ["test", "--file", ".env"]],
+  ["the key as test's service", ["test", IN_ENVIRONMENT]],
+  ["the key after test's service", ["test", "fhir-base", IN_ENVIRONMENT]],
+  ["the key as test's --file", ["test", "--file", IN_ENVIRONMENT]],
+  ["the key as test's --all value", ["test", `--all=${IN_ENVIRONMENT}`]],
 ];
 
 let project: string;
@@ -397,6 +411,62 @@ describe("doctor never prints a key, a near-miss's value or name, or what the AP
       assertClean(out.stderr, `stderr of ${args.join(" ")}`);
     }
     expect(server.to("/v1/fhir/r4/metadata").length).toBeGreaterThan(0);
+  });
+});
+
+describe("test never prints a key, or what the API sent back", () => {
+  const answers: ApiAnswer[] = ["ok", "unauthorized", "rate-limited", "unavailable", "echo"];
+  for (const answer of answers) {
+    it(`when the API answers ${answer}, at a terminal and not, as text and as JSON`, async () => {
+      server.apiAnswer = answer;
+      for (const tty of [true, false]) {
+        for (const output of ["", "json", "text"]) {
+          for (const env of [
+            { HAAU3_BASE_URL: server.url },
+            { HAAU3_BASE_URL: server.url, HAAU3_API_KEY: IN_ENVIRONMENT },
+            { HAAU3_BASE_URL: server.url, HAAU3_ENVIRONMENT: "sandbox", HAAU3_API_KEY: IN_ENV_LOCAL },
+            { HAAU3_BASE_URL: `${server.url}/${IN_ENVIRONMENT}` },
+            { HAAU3_BASE_URL: server.url.replace("http://127.0.0.1", `http://u:${IN_ENVIRONMENT}@127.0.0.1`) },
+          ]) {
+            const before = server.requests.length;
+            for (const args of [["test"], ["test", "fhir-base", "--all"]]) {
+              const out = await runCli(args, {
+                tty,
+                env: { HAAU3_OUTPUT: output, HAAU3_PLATFORM_URL: server.url, NEIGHBOUR_TOKEN: NEIGHBOUR, ...env },
+                cwd: project,
+                io: { store: testStore(dir, memoryKeyring()), ...fakeClock() },
+              });
+              assertClean(out.stdout, `stdout of ${args.join(" ")}`);
+              assertClean(out.stderr, `stderr of ${args.join(" ")}`);
+            }
+            // A base URL that holds a key is never called, so the key goes nowhere.
+            if (env.HAAU3_BASE_URL !== server.url) expect(server.requests.length).toBe(before);
+          }
+        }
+      }
+      // test read the spec and called the API here, so the check above saw real answers.
+      expect(server.to("/openapi.json").length).toBeGreaterThan(0);
+      expect(server.to("/v1/fhir/r4/metadata").length).toBeGreaterThan(0);
+    });
+  }
+
+  it("as a real process, whose stdout is a pipe, and as text", async () => {
+    server.apiAnswer = "echo";
+    const env = { HAAU3_BASE_URL: server.url, HAAU3_PLATFORM_URL: server.url, HAAU3_SESSION_STORE: "file", HAAU3_CONFIG_DIR: dir, HAAU3_API_KEY: IN_ENVIRONMENT };
+    for (const [args, output] of [
+      [["test"], ""],
+      [["test", "fhir-base", "--all"], ""],
+      [["test", "fhir-base", "--all"], "text"],
+      [["test", "--file", ".env"], ""],
+    ] as const) {
+      const out = await spawnCliAsync([...args], { cwd: project, env: { ...env, HAAU3_OUTPUT: output } });
+      if (output === "") expect(out.stdout.startsWith("{"), args.join(" ")).toBe(true);
+      expect([0, 1], args.join(" ")).toContain(out.code);
+      assertClean(out.stdout, `stdout of ${args.join(" ")}`);
+      assertClean(out.stderr, `stderr of ${args.join(" ")}`);
+    }
+    // The spec repeated the key into its names, and its query marker was sent: what test read was hostile.
+    expect(server.to("/v1/fhir/r4/Echo").length).toBeGreaterThan(0);
   });
 });
 

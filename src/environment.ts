@@ -40,6 +40,8 @@ export function checkAddress(configured: string): AddressCheck {
   }
   if (url.username || url.password) return { ok: false, why: "carries a user name or password" };
   if (url.search || url.hash) return { ok: false, why: "carries a query or a fragment" };
+  // api.haau3.com. is api.haau3.com to DNS but not to a comparison of addresses.
+  if (url.hostname.endsWith(".")) return { ok: false, why: "has a host that ends in a dot" };
   if (!isSafeAddress(url)) return { ok: false, why: "is neither https nor http on this computer" };
   return { ok: true, address: `${url.origin}${url.pathname}`.replace(/\/+$/, "") };
 }

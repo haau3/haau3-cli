@@ -97,6 +97,23 @@ export function fileFlag(file: string): string {
   return file.startsWith("-") ? `--file=${arg(file)}` : `--file ${arg(file)}`;
 }
 
+/** A command that reruns keys create with the same file, for a key that has to be made again. */
+export function keysCreateStep(options: { test?: boolean; replace?: boolean; file?: string | undefined }, description: string): NextStep {
+  const parts = ["npx haau3 keys create"];
+  if (options.test) parts.push("--test");
+  if (options.file !== undefined) parts.push(fileFlag(options.file));
+  if (options.replace) parts.push("--replace");
+  return { command: parts.join(" "), description };
+}
+
+/** Setting the Sandbox as the environment, in this shell's own words. */
+export function sandboxStep(platform: NodeJS.Platform): NextStep {
+  return {
+    command: platform === "win32" ? `$env:HAAU3_ENVIRONMENT = "sandbox"` : `export HAAU3_ENVIRONMENT=sandbox`,
+    description: `Or call the Sandbox with no key: set HAAU3_ENVIRONMENT=sandbox where the app reads its settings, such as its env file.`,
+  };
+}
+
 /** `doctor`, with the env file it should read when it is not one of the defaults. */
 export function doctorStep(file?: string): NextStep {
   return {
