@@ -122,16 +122,19 @@ describe("keys create, signed in", () => {
     expect(keyCalls()).toBe(1);
   });
 
-  it("writes .env.local for a Next.js or Vite project", async () => {
-    for (const framework of ["next", "vite"]) {
-      // Making a key ends the sign-in, so each key has its own.
-      if (framework === "vite") await signIn();
-      rmSync(join(project, ".env.local"), { force: true });
-      writeFileSync(join(project, "package.json"), JSON.stringify({ dependencies: framework === "next" ? { next: "16.0.0" } : {}, devDependencies: framework === "vite" ? { vite: "7.0.0" } : {} }));
-      const out = await cli(["keys", "create"]);
-      expect(json(out.stdout).data.envFile.path).toBe(".env.local");
-      expect(existsSync(join(project, ".env"))).toBe(false);
-    }
+  it("writes .env.local for a Next.js project, and .env for a Vite one, which loads neither into process.env", async () => {
+    writeFileSync(join(project, "package.json"), JSON.stringify({ dependencies: { next: "16.0.0" } }));
+    const next = await cli(["keys", "create"]);
+    expect(json(next.stdout).data.envFile.path).toBe(".env.local");
+    expect(existsSync(join(project, ".env"))).toBe(false);
+
+    // Making a key ends the sign-in, so each key has its own.
+    await signIn();
+    rmSync(join(project, ".env.local"), { force: true });
+    writeFileSync(join(project, "package.json"), JSON.stringify({ devDependencies: { vite: "7.0.0" } }));
+    const vite = await cli(["keys", "create"]);
+    expect(json(vite.stdout).data.envFile.path).toBe(".env");
+    expect(existsSync(join(project, ".env.local"))).toBe(false);
   });
 
   it("writes to the file that holds the key, and replaces it only with --replace", async () => {
@@ -237,7 +240,7 @@ describe("keys create in a git repository", () => {
   });
 
   it("refuses a file git does not ignore, with the line to add, and asks the platform for nothing", async () => {
-    writeFileSync(join(project, "package.json"), JSON.stringify({ devDependencies: { vite: "7.0.0" } }));
+    writeFileSync(join(project, "package.json"), JSON.stringify({ devDependencies: { next: "16.0.0" } }));
     const out = await cli(["keys", "create"]);
     expect(out.code).toBe(1);
     const document = json(out.stdout);

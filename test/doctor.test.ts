@@ -978,17 +978,27 @@ describe("every file that holds a key is asked about, not only the one in use", 
 });
 
 describe("the files a project's loader reads (owner, 2026-11-12)", () => {
-  it("reads .env alone outside Next.js and Vite, and says a key in .env.local is not loaded", async () => {
+  it("reads .env alone outside Next.js, and says a key in .env.local is not loaded", async () => {
     nodeProject({ framework: false });
     write(".env.local", `HAAU3_API_KEY=${TEST}\n`);
     write(".env", `HAAU3_API_KEY=${LIVE}\n`);
     const both = await report();
     expect(both.checks.key).toMatchObject({ status: "warn", details: { source: ".env", mode: "live" } });
-    expect(both.checks.key.message).toContain(".env.local also holds a key, which this project's loader does not read: only Next.js and Vite load it.");
+    expect(both.checks.key.message).toContain(".env.local also holds a key, which this project's loader does not read: only Next.js loads it.");
     rmSync(join(project, ".env"));
     const onlyLocal = await report();
     expect(onlyLocal.checks.key).toMatchObject({ status: "fail", details: { unloaded: ".env.local" } });
     expect(onlyLocal.checks.key.message).toContain("HAAU3_API_KEY is in .env.local, which this project's loader does not read");
+  });
+
+  // Vite loads env files into import.meta.env, so a Vite app's server code never sees .env.local.
+  it("never says ready for a key in a Vite project's .env.local", async () => {
+    nodeProject({ framework: false });
+    write("package.json", JSON.stringify({ name: "app", dependencies: { "@haau3/sdk": "0.4.1" }, devDependencies: { vite: "8.0.0" } }));
+    write(".env.local", `HAAU3_API_KEY=${LIVE}\n`);
+    const { checks } = await report();
+    expect(checks.key).toMatchObject({ status: "fail", details: { unloaded: ".env.local" } });
+    expect(checks.key.message).toContain("only Next.js loads it. Move it to .env.");
   });
 });
 
