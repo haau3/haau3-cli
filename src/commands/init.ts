@@ -13,7 +13,7 @@ import { addMcpEntries, entryText, MCP_TARGETS } from "../agents/mcp.js";
 import { fetchSkill, SKILL_FILES, writeSkill } from "../agents/skill.js";
 import { sandboxNamed } from "../calls.js";
 import { chooseFile, fileFlagError, homeOf, printablePath, readsEnvLocal, shownPath } from "../envfile.js";
-import { resolveDocs } from "../environment.js";
+import { DEFAULT_DOCS_URL, DOCS_URL_VARIABLE, resolveDocs } from "../environment.js";
 import { gitAnswer, sameFolder } from "../git.js";
 import { EXIT, failure, success, type CliError, type NextStep } from "../output.js";
 import { ADD, ALL_MANAGERS, detectManager, MANAGERS, managerFor, MANIFEST_FILES, UPGRADE, type Manager, type ManagerFound } from "../packages.js";
@@ -278,14 +278,27 @@ async function skillStep(ctx: Context, agents: Agent[], docsURL: string, folder:
     };
   }
   const outcomes = writeSkill(folder, agents.map((agent) => SKILL_FILES[agent]), fetched.bytes);
-  const left = outcomes.filter((o) => o.result === "left");
+  const left = outcomes.flatMap((o) => (o.result === "left" ? [o] : []));
   const details = { source, files: outcomes };
-  const done = describe(outcomes, "the haau3 skill");
-  if (left.length) {
-    const why = left.map((o) => (o.result === "left" ? `${o.why}` : "")).join("; ");
-    return { check: check("skill", "warn", `${done ? `${done} ` : ""}Left as it was: ${why}.`, [], details), changed: changedFiles(outcomes) };
+  const done = [overridden(docsURL), describe(outcomes, "the haau3 skill")].filter(Boolean).join(" ");
+  // A link where the skill goes could be anyone's file: the agent would read it as haau3's skill.
+  const linked = left.filter((o) => o.link);
+  if (linked.length) {
+    const why = linked.map((o) => o.why).join("; ");
+    return {
+      check: check("skill", "fail", `${done ? `${done} ` : ""}Not added: ${why}. Remove the link, then run init again.`, [{ command: rerun(options), description: "Run init again once the link is gone." }], details),
+      changed: changedFiles(outcomes),
+    };
   }
-  return { check: check("skill", "pass", done, [], details), changed: changedFiles(outcomes) };
+  if (left.length) {
+    return { check: check("skill", "warn", `${done ? `${done} ` : ""}Left as it was: ${left.map((o) => o.why).join("; ")}.`, [], details), changed: changedFiles(outcomes) };
+  }
+  return { check: check("skill", overridden(docsURL) ? "warn" : "pass", done, [], details), changed: changedFiles(outcomes) };
+}
+
+/** Said first in the skill's and the MCP server's lines when the docs are not docs.haau3.com. */
+function overridden(docsURL: string): string {
+  return docsURL === DEFAULT_DOCS_URL ? "" : `From ${new URL(docsURL).host}, as ${DOCS_URL_VARIABLE} asks, in place of ${new URL(DEFAULT_DOCS_URL).host}.`;
 }
 
 function mcpStep(agents: Agent[], docsURL: string, folder: string): { check: InitCheck; changed: Changed[] } {
@@ -295,16 +308,17 @@ function mcpStep(agents: Agent[], docsURL: string, folder: string): { check: Ini
   const details = { url, files: outcomes };
   const done = describe(outcomes, `the docs' MCP server, ${url},`);
   const notes: string[] = [];
-  const set = (agent: Agent) => outcomes.find((o) => o.file === MCP_TARGETS[agent].file && o.result !== "left");
-  if (agents.includes("claude-code") && set("claude-code")) notes.push("Claude Code asks you to approve it the first time it starts here.");
-  const trusted = (["codex", "gemini-cli"] as const).filter((agent) => agents.includes(agent) && set(agent)).map((agent) => AGENT_NAMES[agent]);
+  // What each agent does with a project's MCP file, said only where init just wrote one.
+  const written = (agent: Agent) => outcomes.some((o) => o.file === MCP_TARGETS[agent].file && (o.result === "created" || o.result === "updated"));
+  if (agents.includes("claude-code") && written("claude-code")) notes.push("Claude Code asks you to approve it the first time it starts here.");
+  const trusted = (["codex", "gemini-cli"] as const).filter((agent) => agents.includes(agent) && written(agent)).map((agent) => AGENT_NAMES[agent]);
   if (trusted.length) notes.push(`${list(trusted)} ${trusted.length === 1 ? "reads" : "read"} it once you trust this folder.`);
   const left = agents.flatMap((agent) => {
     const outcome = outcomes.find((o) => o.file === MCP_TARGETS[agent].file);
     return outcome?.result === "left" ? [`${outcome.why}. To add it yourself: ${entryText(agent, url)}`] : [];
   });
-  const message = [done, ...notes, ...left.map((l) => `${l}.`)].filter(Boolean).join(" ");
-  return { check: check("mcp", left.length ? "warn" : "pass", message, [], details), changed: changedFiles(outcomes) };
+  const message = [overridden(docsURL), done, ...notes, ...left.map((l) => `${l}.`)].filter(Boolean).join(" ");
+  return { check: check("mcp", left.length || overridden(docsURL) ? "warn" : "pass", message, [], details), changed: changedFiles(outcomes) };
 }
 
 // --- the env file --------------------------------------------------------------------------------

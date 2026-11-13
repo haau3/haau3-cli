@@ -1,10 +1,13 @@
 // The docs' MCP server, added to the project's own MCP file for each coding agent, under the name
-// haau3. These files are the person's: an entry is added only when none named haau3 is there, the
-// rest of the file reads back exactly as it did, and a file haau3 cannot read safely (one with
-// comments, an inline table) or a haau3 entry that names another server is left as it is, with the
+// haau3. These files are the person's, and an entry in them is a server their agent will run or
+// call, so haau3 is strict both ways. An entry counts as already there only when it is exactly the
+// one haau3 writes: a haau3 entry that differs in any way (another address, a command beside the
+// address) is never called set up, and never changed. And a file is rewritten only when it would read
+// back exactly as it was, layout included, with the entry added; a file haau3 cannot be sure of (one
+// with comments, its own layout, a multi-line string, an unusual spelling) is left as it is, with the
 // entry to add said instead.
 import type { Agent } from "./detect.js";
-import { inspectProjectFile, writeProjectFile, type FileOutcome } from "./files.js";
+import { inspectProjectFile, textOf, writeProjectFile, type FileOutcome } from "./files.js";
 
 /** The name the entry has in every file, as the docs' own setup commands give it. */
 export const SERVER_NAME = "haau3";
@@ -47,23 +50,14 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** The address an entry names, whichever key its agent spells it with. */
-function addressOf(entry: unknown): string | null {
-  if (!isPlainObject(entry)) return null;
-  for (const key of ["url", "httpUrl", "serverUrl"]) {
-    if (typeof entry[key] === "string") return entry[key];
-  }
-  return null;
+/** Whether an entry is exactly this one: the same keys, each the same string. */
+function sameEntry(entry: unknown, wanted: Record<string, string>): boolean {
+  if (!isPlainObject(entry)) return false;
+  const keys = Object.keys(entry);
+  return keys.length === Object.keys(wanted).length && keys.every((key) => Object.hasOwn(wanted, key) && entry[key] === wanted[key]);
 }
 
-/** Whether every number in a parsed value is one JSON.stringify writes back as the file had it: finite, and an integer only when a safe one. */
-function exactNumbers(value: unknown, depth = 0): boolean {
-  if (depth > 100) return false;
-  if (typeof value === "number") return Number.isFinite(value) && (!Number.isInteger(value) || Number.isSafeInteger(value));
-  if (Array.isArray(value)) return value.every((item) => exactNumbers(item, depth + 1));
-  if (isPlainObject(value)) return Object.values(value).every((item) => exactNumbers(item, depth + 1));
-  return true;
-}
+type Plan = { kind: "write"; text: string } | { kind: "unchanged" } | { kind: "left"; why: string };
 
 /** The indent a JSON file uses: its first indented line's, else two spaces. */
 function indentOf(text: string): string {
@@ -71,12 +65,11 @@ function indentOf(text: string): string {
   return line ? line[1]! : "  ";
 }
 
-type Plan = { kind: "write"; text: string } | { kind: "unchanged" } | { kind: "left"; why: string };
-
 /** The JSON file with the entry added, or why not. */
 export function planJson(text: string | null, target: JsonTarget, url: string): Plan {
   const entry = target.entry(url);
-  if (text === null) return { kind: "write", text: `${JSON.stringify({ [target.container]: { [SERVER_NAME]: entry } }, null, 2)}\n` };
+  const fresh = `${JSON.stringify({ [target.container]: { [SERVER_NAME]: entry } }, null, 2)}\n`;
+  if (text === null || text.trim() === "") return { kind: "write", text: fresh };
   const bom = text.startsWith("\uFEFF");
   const body = bom ? text.slice(1) : text;
   let root: unknown;
@@ -89,69 +82,78 @@ export function planJson(text: string | null, target: JsonTarget, url: string): 
   const servers = Object.hasOwn(root, target.container) ? root[target.container] : undefined;
   if (servers !== undefined && !isPlainObject(servers)) return { kind: "left", why: `"${target.container}" in ${target.file} is not an object, so haau3 left it as it is` };
   if (servers && Object.hasOwn(servers, SERVER_NAME)) {
-    return addressOf(servers[SERVER_NAME]) === url
+    return sameEntry(servers[SERVER_NAME], entry)
       ? { kind: "unchanged" }
-      : { kind: "left", why: `${target.file} already has an entry named ${SERVER_NAME} for another server, so haau3 left it as it is` };
+      : { kind: "left", why: `${target.file} already has an entry named ${SERVER_NAME} that is not exactly the docs' server, so haau3 left it as it is` };
   }
-  // Written back, every value must read as it did: a number JavaScript cannot hold exactly would not.
-  if (!exactNumbers(root)) return { kind: "left", why: `${target.file} holds a number haau3 could not write back exactly, so haau3 left it as it is` };
-  const updated: Record<string, unknown> = { ...root, [target.container]: { ...(servers ?? {}), [SERVER_NAME]: entry } };
+  // Rewritten only when the file is laid out as JSON.stringify lays it out, indented or on one line:
+  // then it reads back exactly as it was, with only the entry new. Any other layout is the person's.
   const eol = body.includes("\r\n") ? "\r\n" : "\n";
-  let out = JSON.stringify(updated, null, indentOf(body));
-  if (eol === "\r\n") out = out.replace(/\n/g, "\r\n");
-  const trailing = /\r?\n$/.test(body) || body.length === 0 ? eol : "";
-  return { kind: "write", text: `${bom ? "\uFEFF" : ""}${out}${trailing}` };
+  const unix = body.replace(/\r\n/g, "\n");
+  const trailing = unix.endsWith("\n");
+  const plain = trailing ? unix.slice(0, -1) : unix;
+  const indent = [indentOf(unix), ""].find((candidate) => JSON.stringify(root, null, candidate) === plain);
+  if (indent === undefined) return { kind: "left", why: `${target.file} is laid out in a way haau3 cannot write back exactly, so haau3 left it as it is` };
+  const updated: Record<string, unknown> = { ...root, [target.container]: { ...(servers ?? {}), [SERVER_NAME]: entry } };
+  const out = `${JSON.stringify(updated, null, indent)}${trailing ? "\n" : ""}`;
+  return { kind: "write", text: `${bom ? "\uFEFF" : ""}${eol === "\r\n" ? out.replace(/\n/g, "\r\n") : out}` };
 }
 
-const HAAU3_TABLE = /^[ \t]*\[[ \t]*mcp_servers[ \t]*\.[ \t]*(?:haau3|"haau3"|'haau3')[ \t]*\][ \t]*(?:#.*)?$/;
+/** A table header for haau3's own server, spelled the one way haau3 reads. */
+const HAAU3_TABLE = /^[ \t]*\[mcp_servers\.haau3\][ \t]*(?:#.*)?$/;
+/** The only lines that may name mcp_servers: a plain table header, for the servers or for one by a bare name. */
+const PLAIN_HEADER = /^[ \t]*\[mcp_servers(?:\.[A-Za-z0-9_-]+)?\][ \t]*(?:#.*)?$/;
 const ANY_HEADER = /^[ \t]*\[/;
-const URL_LINE = /^[ \t]*url[ \t]*=[ \t]*"([^"\\]*)"[ \t]*(?:#.*)?$/;
 
-/** Codex's config.toml with the table added, or why not. Read by lines, as far as it needs to be sure. */
+/** Codex's config.toml with the table added, or why not. Read by lines, so only as far as lines are certain. */
 export function planToml(text: string | null, file: string, url: string): Plan {
   const table = `[mcp_servers.${SERVER_NAME}]\nurl = ${JSON.stringify(url)}\n`;
-  if (text === null) return { kind: "write", text: table };
-  const lines = text.split(/\r?\n/);
+  if (text === null || text.trim() === "") return { kind: "write", text: table };
+  const bom = text.startsWith("\uFEFF");
+  const body = bom ? text.slice(1) : text;
+  const leave = (why: string): Plan => ({ kind: "left", why: `${file} ${why}, so haau3 left it as it is` });
+  // A multi-line string can hold anything, a line that looks like a table included.
+  if (body.includes('"""') || body.includes("'''")) return leave("holds a multi-line string");
+  const lines = body.split(/\r?\n/);
+  if (lines.some((line) => line.includes("mcp_servers") && !PLAIN_HEADER.test(line))) return leave("names mcp_servers in a way haau3 does not read");
   const at = lines.findIndex((line) => HAAU3_TABLE.test(line));
   if (at !== -1) {
     const end = lines.findIndex((line, i) => i > at && ANY_HEADER.test(line));
-    const body = lines.slice(at + 1, end === -1 ? lines.length : end);
-    const address = body.map((line) => URL_LINE.exec(line)?.[1]).find((value) => value !== undefined);
-    return address === url ? { kind: "unchanged" } : { kind: "left", why: `${file} already has an ${SERVER_NAME} server that names another address, so haau3 left it as it is` };
+    const content = lines.slice(at + 1, end === -1 ? lines.length : end).filter((line) => line.trim() !== "" && !line.trimStart().startsWith("#"));
+    const exactly = content.length === 1 && /^[ \t]*url[ \t]*=[ \t]*"([^"\\]*)"[ \t]*$/.exec(content[0]!)?.[1] === url;
+    return exactly ? { kind: "unchanged" } : leave(`already has an ${SERVER_NAME} server that is not exactly the docs' server`);
   }
-  // Any other way of spelling mcp_servers could already hold haau3, or make a new table invalid.
-  if (lines.some((line) => /^[ \t]*(?:mcp_servers|"mcp_servers")[ \t]*[=.]/.test(line) || (/^[ \t]*\[\[/.test(line) && /mcp_servers/.test(line)))) {
-    return { kind: "left", why: `${file} sets mcp_servers in a way haau3 does not read, so haau3 left it as it is` };
-  }
-  const servers = lines.findIndex((line) => /^[ \t]*\[[ \t]*(?:mcp_servers|"mcp_servers")[ \t]*\][ \t]*(?:#.*)?$/.test(line));
+  const servers = lines.findIndex((line) => /^[ \t]*\[mcp_servers\][ \t]*(?:#.*)?$/.test(line));
   if (servers !== -1) {
     const end = lines.findIndex((line, i) => i > servers && ANY_HEADER.test(line));
-    const body = lines.slice(servers + 1, end === -1 ? lines.length : end);
-    if (body.some((line) => /^[ \t]*["']?haau3["']?[ \t]*[=.]/.test(line))) {
-      return { kind: "left", why: `${file} already names an ${SERVER_NAME} server in a way haau3 does not read, so haau3 left it as it is` };
-    }
+    if (lines.slice(servers + 1, end === -1 ? lines.length : end).some((line) => /haau3/.test(line))) return leave(`already names an ${SERVER_NAME} server in a way haau3 does not read`);
   }
-  const eol = text.includes("\r\n") ? "\r\n" : "\n";
-  const ending = text.length === 0 || text.endsWith("\n") ? "" : eol;
-  const gap = text.trim().length === 0 ? "" : eol;
-  return { kind: "write", text: `${text}${ending}${gap}${table.replace(/\n/g, eol)}` };
+  const eol = body.includes("\r\n") ? "\r\n" : "\n";
+  const ending = body.endsWith("\n") ? "" : eol;
+  return { kind: "write", text: `${bom ? "\uFEFF" : ""}${body}${ending}${eol}${table.replace(/\n/g, eol)}` };
 }
 
 /** Adds the entry to each agent's file. */
 export function addMcpEntries(cwd: string, agents: readonly Agent[], url: string): FileOutcome[] {
-  return agents.map((agent) => {
+  return agents.map((agent): FileOutcome => {
     const target = MCP_TARGETS[agent];
     const file = target.file;
     const inspected = inspectProjectFile(cwd, file, MAX_MCP_BYTES);
-    if (!inspected.ok) return { file, result: "left", why: inspected.why };
-    const plan = target.format === "json" ? planJson(inspected.text, target, url) : planToml(inspected.text, file, url);
+    if (!inspected.ok) return { file, result: "left", why: inspected.why, link: inspected.link };
+    let text: string | null = null;
+    if (inspected.exists) {
+      if (inspected.bytes === null) return { file, result: "left", why: `${file} is too large to be an MCP file haau3 writes, so haau3 left it as it is` };
+      text = textOf(inspected.bytes);
+      if (text === null) return { file, result: "left", why: `${file} is not UTF-8 text, so haau3 left it as it is` };
+    }
+    const plan = target.format === "json" ? planJson(text, target, url) : planToml(text, file, url);
     if (plan.kind === "unchanged") return { file, result: "unchanged" };
     if (plan.kind === "left") return { file, result: "left", why: plan.why };
     try {
-      writeProjectFile(inspected.path, plan.text);
+      writeProjectFile(cwd, inspected.path, plan.text, inspected.mode);
     } catch {
       return { file, result: "left", why: `${file} could not be written` };
     }
-    return { file, result: inspected.text === null ? "created" : "updated" };
+    return { file, result: inspected.exists ? "updated" : "created" };
   });
 }

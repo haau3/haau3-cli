@@ -27,12 +27,37 @@ const MAX_REDIRECTS = 3;
 
 export type SkillFetch = { ok: true; bytes: Uint8Array; url: string } | { ok: false; why: string };
 
-/** Whether the text reads as the haau3 skill: frontmatter first, naming it haau3 and describing it. */
-export function isHaau3Skill(text: string): boolean {
+/**
+ * The frontmatter keys the Agent Skills format defines that grant nothing. Others can: Claude Code's
+ * allowed-tools runs tools without asking, and hooks run commands. The docs' skill has only name and
+ * description.
+ */
+const ALLOWED_KEYS = new Set(["name", "description", "license", "compatibility", "metadata"]);
+
+/**
+ * Why the text is not the haau3 skill as haau3 writes one, or null when it is: frontmatter first,
+ * naming it haau3 and describing it, with no key that grants an agent anything, and no command in
+ * the body that an agent runs as it loads the skill (`!`-quoted, or a ```! block).
+ */
+export function skillProblem(text: string): string | null {
   const front = /^---\r?\n([\s\S]{0,4096}?)\r?\n---(?:\r?\n|$)/.exec(text);
-  if (!front) return false;
+  if (!front) return "it does not start with frontmatter";
   const lines = front[1]!.split(/\r?\n/);
-  return lines.some((line) => /^name:[ \t]*(["']?)haau3\1[ \t]*$/.test(line)) && lines.some((line) => /^description:[ \t]*\S/.test(line));
+  if (!lines.some((line) => /^name:[ \t]*(["']?)haau3\1[ \t]*$/.test(line))) return "its frontmatter does not name it haau3";
+  if (!lines.some((line) => /^description:[ \t]*\S/.test(line))) return "its frontmatter has no description";
+  for (const line of lines) {
+    if (/^[ \t]/.test(line) || line.trim() === "" || line.trimStart().startsWith("#")) continue;
+    const key = /^([^:]{1,64}):/.exec(line)?.[1]?.trim().replace(/^["']|["']$/g, "");
+    if (key === undefined || !ALLOWED_KEYS.has(key)) return "its frontmatter sets a key that can grant an agent something (only name, description, license, compatibility and metadata are taken)";
+  }
+  const body = text.slice(front[0].length);
+  if (body.includes("!`") || /^[ \t]*(`{3,}|~{3,})[ \t]*!/m.test(body)) return "it holds a command an agent would run as it loads the skill";
+  return null;
+}
+
+/** Whether the text reads as the haau3 skill, by skillProblem. */
+export function isHaau3Skill(text: string): boolean {
+  return skillProblem(text) === null;
 }
 
 async function readCapped(response: Response, max: number): Promise<Uint8Array | null> {
@@ -94,9 +119,8 @@ export async function fetchSkill(docsURL: string, fetchImpl: typeof fetch = fetc
       } catch {
         return { ok: false, why: `the skill from ${origin} is not UTF-8 text` };
       }
-      if (text.includes("\u0000") || !isHaau3Skill(text.replace(/^\uFEFF/, ""))) {
-        return { ok: false, why: `what ${origin} answered for the skill is not the haau3 skill (its frontmatter must name it haau3)` };
-      }
+      const problem = text.includes("\u0000") ? "it is not text" : skillProblem(text.replace(/^\uFEFF/, ""));
+      if (problem) return { ok: false, why: `what ${origin} answered for the skill is not the haau3 skill: ${problem}` };
       return { ok: true, bytes, url };
     }
   } catch (error) {
@@ -105,17 +129,21 @@ export async function fetchSkill(docsURL: string, fetchImpl: typeof fetch = fetc
   }
 }
 
-/** Writes the skill to each file, once each; a file that already holds these bytes is left unchanged. */
+/**
+ * Writes the skill to each file, once each. The folder is haau3's: any regular file there that is not
+ * these exact bytes is replaced, whatever it holds or however large; one already holding them is left
+ * unchanged. A link in the way is refused, and said to be one.
+ */
 export function writeSkill(cwd: string, files: readonly string[], bytes: Uint8Array): FileOutcome[] {
-  return [...new Set(files)].map((file) => {
+  return [...new Set(files)].map((file): FileOutcome => {
     const inspected = inspectProjectFile(cwd, file, MAX_SKILL_BYTES);
-    if (!inspected.ok) return { file, result: "left", why: inspected.why };
-    if (inspected.text !== null && Buffer.from(inspected.text, "utf8").equals(bytes)) return { file, result: "unchanged" };
+    if (!inspected.ok) return { file, result: "left", why: inspected.why, link: inspected.link };
+    if (inspected.bytes !== null && inspected.bytes.equals(bytes)) return { file, result: "unchanged" };
     try {
-      writeProjectFile(inspected.path, bytes);
+      writeProjectFile(cwd, inspected.path, bytes, inspected.mode);
     } catch {
       return { file, result: "left", why: `${file} could not be written` };
     }
-    return { file, result: inspected.text === null ? "created" : "updated" };
+    return { file, result: inspected.exists ? "updated" : "created" };
   });
 }
