@@ -26,9 +26,15 @@ export interface Context {
    * picked none it could read. Absent where nobody can be asked.
    */
   ask?: Ask;
+  /**
+   * Asks a person at a terminal to type `expected` to confirm something that cannot be undone: true
+   * when they did. Absent where nobody can be asked, as `ask` is.
+   */
+  confirm?: Confirm;
 }
 
 export type Ask = (question: string, choices: string[], multiple: boolean) => Promise<number[] | null>;
+export type Confirm = (question: string, prompt: string, expected: string) => Promise<boolean>;
 
 export interface Result {
   document: Document;
@@ -129,6 +135,7 @@ export function doctorStep(file?: string): NextStep {
   };
 }
 export const LOGOUT_STEP: NextStep = { command: "npx haau3 logout", description: "Sign out, then sign in again to pick another organization." };
+export const KEYS_LIST_STEP: NextStep = { command: "npx haau3 keys list", description: "List this organization's keys and their ids." };
 
 /** Neither store would keep the session. */
 export function storeFailed(path: string): CliError {

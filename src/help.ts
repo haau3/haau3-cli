@@ -54,6 +54,12 @@ export const HELP: Help = {
     { name: "keys create --name <name>", description: "Name the key. By default the name says haau3 made it, for which folder and on which day." },
     { name: "keys create --file <file>", description: "Write to this env file. By default the one that holds the key, else .env.local, else .env." },
     { name: "keys create --replace", description: "Replace a key the file already holds. The old key is not revoked." },
+    { name: "keys list", description: "The signed-in organization's active keys: name, prefix, mode, when made and last used, and id. Marks the key this project uses. Never a key." },
+    { name: "keys list --all", description: "Revoked keys too." },
+    {
+      name: "keys revoke <id>",
+      description: "Revoke a key: a person at a terminal types its name to confirm. Refused with no terminal, JSON, CI or a coding agent. Revoking ends the sign-in.",
+    },
   ],
   options: [
     { name: "--json", description: "Print one JSON document. Automatic when output is not a terminal." },

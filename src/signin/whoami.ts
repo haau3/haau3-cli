@@ -4,7 +4,8 @@
 // and a value it does not expect (a new plan, say) is carried rather than refused.
 import type { CliError, Problem } from "../output.js";
 import { CLI_API_PATH, platformUnavailable } from "./discovery.js";
-import { call, dateOf, displayText, isRecord, problemOf, text } from "./http.js";
+import { call, dateOf, displayText, isRecord, mayHoldSecret, problemOf, text } from "./http.js";
+import { HIDDEN_NAME } from "./keys.js";
 import type { AccessToken } from "./secret.js";
 
 export interface Whoami {
@@ -36,7 +37,7 @@ export async function readWhoami(platformURL: string, token: AccessToken, timeou
     return { kind: "error", error: { code: "platform-unreachable", message: `${host} did not answer. Check the connection and try again.`, next: [{ command: "npx haau3 whoami", description: "Ask again." }] } };
   }
   if (answer.status === 200) {
-    const whoami = parseWhoami(answer.body);
+    const whoami = parseWhoami(answer.body, token.reveal());
     // A success's problem is its status and request id only: its body is never read as one.
     if (whoami) return { kind: "ok", whoami, platformNow: dateOf(answer.headers), answer: problemOf(answer) };
     return {
@@ -53,15 +54,19 @@ export async function readWhoami(platformURL: string, token: AccessToken, timeou
   return { kind: "error", error: { code: "unexpected-answer", message: `${host} refused to describe the session (HTTP ${answer.status}).`, next: [], problem } };
 }
 
-export function parseWhoami(body: unknown): Whoami | undefined {
+/** `bearer` is the token the request was sent with: an organization's name holding any of it is never shown. */
+export function parseWhoami(body: unknown, bearer?: string): Whoami | undefined {
   if (!isRecord(body)) return undefined;
   const { member, organization, plan, usage, session } = body;
   if (!isRecord(member) || !isRecord(organization) || !isRecord(plan) || !isRecord(session)) return undefined;
-  // Ids and times must be clean; names someone chose are shown with anything unsafe replaced.
+  // Ids and times must be clean; names someone chose are shown with anything unsafe replaced, and an
+  // organization's name that could hold a secret not at all: a person names it, and it is printed often.
   const memberId = text(member.id, 200);
   const email = member.email === null ? null : displayText(member.email, 320);
   const orgId = text(organization.id, 200);
-  const orgName = displayText(organization.name, 200);
+  const shownName = displayText(organization.name, 200);
+  const rawName = typeof organization.name === "string" ? organization.name : "";
+  const orgName = shownName && (mayHoldSecret(rawName, bearer) || mayHoldSecret(shownName, bearer)) ? HIDDEN_NAME : shownName;
   const slug = organization.slug === null ? null : displayText(organization.slug, 200);
   const role = displayText(body.role, 100);
   const tier = text(plan.tier, 50);

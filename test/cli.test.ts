@@ -58,6 +58,9 @@ describe("help", () => {
       "keys create --name <name>",
       "keys create --file <file>",
       "keys create --replace",
+      "keys list",
+      "keys list --all",
+      "keys revoke <id>",
     ]);
     expect(HELP.environment.map((e) => e.name)).toEqual([
       "HAAU3_API_KEY",

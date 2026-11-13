@@ -550,8 +550,8 @@ describe("keys create when the answer cannot be used", () => {
 
 describe("keys create's arguments", () => {
   it("needs its second word, and takes no more", async () => {
-    expect(json((await cli(["keys"])).stdout).error).toMatchObject({ code: "missing-command", message: "haau3 keys needs a command: keys create." });
-    expect(json((await cli(["keys", "nope"])).stdout).error.message).toBe("haau3 keys has no command named nope. It has keys create.");
+    expect(json((await cli(["keys"])).stdout).error).toMatchObject({ code: "missing-command", message: "haau3 keys needs a command: keys create, keys list, keys revoke." });
+    expect(json((await cli(["keys", "nope"])).stdout).error.message).toBe("haau3 keys has no command named nope. It has keys create, keys list, keys revoke.");
     const out = await cli(["keys", "create", "extra"]);
     expect(out.code).toBe(2);
     expect(json(out.stdout).error).toMatchObject({ code: "unexpected-argument", message: "haau3 keys create takes no arguments." });

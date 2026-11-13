@@ -18,6 +18,8 @@ export interface HttpRequest {
   bearer?: AccessToken;
   /** How long the request may take, the body included. 30 seconds unless the caller has less to spare. */
   timeoutMs?: number;
+  /** A POST with no body, for an endpoint that takes none (`keys revoke`). Otherwise a body makes it a POST. */
+  post?: boolean;
 }
 
 /** An answer, its body parsed when it is JSON; or no answer at all. */
@@ -45,7 +47,7 @@ export async function call(url: string, request: HttpRequest = {}): Promise<Http
   if (request.bearer) headers.Authorization = `Bearer ${request.bearer.reveal()}`;
   try {
     const response = await fetch(url, {
-      method: body === undefined ? "GET" : "POST",
+      method: body === undefined && !request.post ? "GET" : "POST",
       headers,
       body,
       redirect: "manual",
@@ -114,6 +116,33 @@ export function text(value: unknown, max = 300): string | undefined {
 export function displayText(value: unknown, max = 300): string | undefined {
   if (typeof value !== "string" || value.length === 0 || value.length > max) return undefined;
   return value.replace(UNSAFE_ALL, (c) => (JOINERS.test(c) ? c : "�"));
+}
+
+/**
+ * A long run of the characters keys and tokens are made of, mixing capitals, small letters and
+ * digits as random text does: a key's 43 random characters, or a token's. A name a person chose rarely
+ * looks like this, and one that does is hidden, which fails closed.
+ */
+const RANDOM_RUN = /[A-Za-z0-9_-]{32,}/g;
+
+function looksRandom(text: string): boolean {
+  for (const run of text.match(RANDOM_RUN) ?? []) {
+    if (/[A-Z]/.test(run) && /[a-z]/.test(run) && /[0-9]/.test(run)) return true;
+  }
+  return false;
+}
+
+/**
+ * Whether a name someone chose could hold a secret, and so must not be shown: a key's marker, even
+ * with invisible characters, spaces, punctuation or other widths inside it (a zero-width
+ * space after an underscore, `haau3 sk`, a fullwidth underscore); any of `bearer`, the token the request was sent with; or a
+ * long random-looking run. The keys page takes any name, a key included.
+ */
+export function mayHoldSecret(name: string, bearer?: string): boolean {
+  const letters = name.normalize("NFKC").toLowerCase().replace(/[^a-z0-9]/g, "");
+  if (letters.includes("haau3sk")) return true;
+  if (bearer !== undefined && holdsSecret(name.normalize("NFKC").replace(/[\p{Cc}\p{Cf}\p{Z}\p{Mn}]/gu, ""), bearer)) return true;
+  return looksRandom(name.normalize("NFKC").replace(/[\p{Cc}\p{Cf}\p{Z}\p{Mn}]/gu, ""));
 }
 
 const CODE = /^[a-z0-9][a-z0-9_-]{0,59}$/;

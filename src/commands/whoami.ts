@@ -3,7 +3,7 @@
 // here: its grant revoked and its copy deleted, so nothing on the computer keeps a dead token.
 import { resolvePlatform } from "../environment.js";
 import { readWhoami } from "../signin/whoami.js";
-import { COMPLETE_STEP, done, failed, LOGIN_STEP, misused, storeData, storeSentence, when, type Context, type Result } from "./context.js";
+import { COMPLETE_STEP, done, failed, LOGIN_STEP, LOGOUT_STEP, misused, nextText, storeData, storeSentence, when, type Context, type Result } from "./context.js";
 import { memberName, organizationError } from "./login.js";
 import { endOnThisClock, endStoredSession, loadRecord } from "./session.js";
 
@@ -42,6 +42,8 @@ export async function whoami(ctx: Context): Promise<Result> {
   const now = ctx.now();
   const expiresAt = Math.min(session.expiresAt, endOnThisClock(who.whoami.session.expiresAt, who.platformNow, now));
   const kept = where ?? { kind: "file" as const, name: "a file only you can read", path: ctx.store.filePath, reason: null };
+  // The organization is the one picked on the approval page: switching is signing in again.
+  const next = [LOGOUT_STEP];
   const data = {
     member,
     organization,
@@ -49,12 +51,14 @@ export async function whoami(ctx: Context): Promise<Result> {
     plan,
     usage,
     session: { expiresAt: new Date(expiresAt).toISOString(), ...storeData(kept) },
+    next,
   };
   const text = [
     `${memberName({ member })}, ${role.replace(/^org:/, "")} in ${organization.name}${organization.slug ? ` (${organization.slug})` : ""}`,
     `Plan: ${plan.name}. ${usage ? `${usage.headline}.` : "This month's use could not be read."}`,
     `The session ends at ${when(expiresAt, now)}.`,
     storeSentence(kept),
+    "To act for another organization, sign out, then sign in and pick it on the approval page.",
   ].join("\n");
-  return done("whoami", data, `${text}\n`);
+  return done("whoami", data, `${text}\n${nextText(next)}`);
 }

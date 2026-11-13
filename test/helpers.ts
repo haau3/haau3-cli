@@ -16,7 +16,7 @@ export interface Captured {
   stderr: string;
 }
 
-export type Extra = Partial<Pick<Io, "stdin" | "now" | "sleep" | "store" | "enter" | "openBrowser" | "fetch" | "ask">>;
+export type Extra = Partial<Pick<Io, "stdin" | "now" | "sleep" | "store" | "enter" | "openBrowser" | "fetch" | "ask" | "confirm">>;
 
 export async function runCli(
   args: string[],
@@ -38,10 +38,14 @@ export async function runCli(
 const TSX = fileURLToPath(new URL("../node_modules/tsx/dist/cli.mjs", import.meta.url));
 const ENTRY = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
 
-/** The parent's environment without anything the command line reads, plus `env`. */
+/**
+ * The parent's environment without anything the command line reads, plus `env`. CI is dropped too:
+ * CI services set it, and `keys revoke` refuses where it is set, so a test of a person at a terminal
+ * would pass on a laptop and fail in CI. A test of CI sets it itself.
+ */
 export function cleanEnv(env: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   const markers = new Set<string>(AGENT_MARKERS);
-  const kept = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^(HAAU3_|CODEX_)/.test(name) && !markers.has(name)));
+  const kept = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^(HAAU3_|CODEX_)/.test(name) && !markers.has(name) && name !== "CI"));
   return { ...kept, ...env };
 }
 
