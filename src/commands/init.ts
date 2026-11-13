@@ -70,7 +70,10 @@ const SAFE_WORD = /^[a-z][a-z0-9-]{0,40}$/;
 
 const START: Readonly<Record<Language, NextStep>> = {
   node: { command: "npm init -y", description: "Start a TypeScript or JavaScript project here: a package.json. Then run npx haau3 init again." },
-  python: { command: "uv init --bare", description: "Start a Python project here: a pyproject.toml and nothing else. Then run npx haau3 init again." },
+  python: {
+    command: "uv init --bare --python 3.10",
+    description: "Start a Python project here: a pyproject.toml and nothing else, for Python 3.10 or newer, which the SDK needs. Then run npx haau3 init again.",
+  },
   go: { command: "go mod init example.com/app", description: "Start a Go module here, named as yours will be. Then run npx haau3 init again." },
 };
 
@@ -144,7 +147,15 @@ function changesBetween(before: Map<string, string | null>, after: Map<string, s
   return changed;
 }
 
-async function sdkStep(ctx: Context, project: Project, language: Language, found: ManagerFound, folder: string, platform: NodeJS.Platform): Promise<{ check: InitCheck; changed: Changed[] }> {
+async function sdkStep(
+  ctx: Context,
+  project: Project,
+  language: Language,
+  found: ManagerFound,
+  folder: string,
+  platform: NodeJS.Platform,
+  options: InitOptions,
+): Promise<{ check: InitCheck; changed: Changed[] }> {
   const { package: name, floor } = SDK_FLOORS[language];
   const manager = found.manager;
   const declared = project.sdks.find((sdk) => sdk.language === language);
@@ -169,16 +180,23 @@ async function sdkStep(ctx: Context, project: Project, language: Language, found
   const args = ADD[manager];
   if (args === null) {
     const requirements = statSafe(join(folder, "requirements.txt"));
+    const pip: NextStep = requirements
+      ? { command: "pip install -r requirements.txt", description: `Install the requirements once haau3>=${floor} is a line in requirements.txt.` }
+      : { command: `pip install "haau3>=${floor}"`, description: "Install the SDK in the project's virtual environment, and list it in the project's dependencies." };
+    // A pyproject.toml that names no tool, as `uv init` makes one, may still be uv's or Poetry's.
+    const tools: NextStep[] =
+      found.how === "default" && statSafe(join(folder, "pyproject.toml"))
+        ? (["uv", "poetry"] as const).map((tool) => ({
+            command: rerun(options, { packageManager: tool }),
+            description: `Or, if this project uses ${MANAGER_NAME[tool]}, run init naming it: ${MANAGER_NAME[tool]} adds haau3 and records it.`,
+          }))
+        : [];
     return {
       check: check(
         "sdk",
         "warn",
         `pip records nothing in a manifest, so haau3 installed nothing. Add haau3>=${floor} to ${requirements ? "requirements.txt" : "the project's dependencies"}, then install it in the project's virtual environment.`,
-        [
-          requirements
-            ? { command: "pip install -r requirements.txt", description: `Install the requirements once haau3>=${floor} is a line in requirements.txt.` }
-            : { command: `pip install "haau3>=${floor}"`, description: "Install the SDK in the project's virtual environment, and list it in the project's dependencies." },
-        ],
+        [pip, ...tools],
         { package: name, installedBy: null },
       ),
       changed: [],
@@ -563,7 +581,7 @@ export async function init(ctx: Context, options: InitOptions): Promise<Result> 
   checks.push(check("language", "pass", `A ${LANGUAGE_NAME[language]} project, by its ${manifest}.`, [], { language, languages: project.languages, manifest }));
   checks.push(managerCheck(found, folder));
 
-  const sdk = await sdkStep(ctx, project, language, found, folder, platform);
+  const sdk = await sdkStep(ctx, project, language, found, folder, platform, options);
   checks.push(sdk.check);
   changed.push(...sdk.changed);
   const skill = await skillStep(ctx, agents, docs.docsURL, folder, options);
