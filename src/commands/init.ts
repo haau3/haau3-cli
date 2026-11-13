@@ -510,7 +510,10 @@ export async function init(ctx: Context, options: InitOptions): Promise<Result> 
     if (!picked) {
       return choiceNeeded(
         `This project's files name more than one package manager (${list(detected.evidence)}). Name the one it uses with --package-manager.`,
-        detected.candidates.map((m) => ({ command: rerun(options, { language, packageManager: m }), description: `Install with ${MANAGER_NAME[m]}.` })),
+        detected.candidates.map((m) => ({
+          command: rerun(options, { language: project.languages.length > 1 ? language : options.language, packageManager: m }),
+          description: `Install with ${MANAGER_NAME[m]}.`,
+        })),
       );
     }
     found = { manager: detected.candidates[picked[0]!]!, how: "flag", evidence: null, folder };
