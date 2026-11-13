@@ -8,8 +8,9 @@
 // shell, and git gets no GIT_ variable from the caller, no fsmonitor and no lazy fetch, since a
 // repository's own settings could otherwise name a program for git to run.
 import { execFile } from "node:child_process";
-import { accessSync, constants, realpathSync, statSync } from "node:fs";
-import { basename, dirname, isAbsolute, join, posix, resolve, win32 } from "node:path";
+import { realpathSync, statSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
+import { findProgram } from "./run.js";
 
 /** How long one question to git may take. */
 export const GIT_TIMEOUT_MS = 5_000;
@@ -24,48 +25,17 @@ export type GitAnswer =
   /** git was asked and gave no answer it could stand behind. */
   | { kind: "git-failed" };
 
-/** The value of PATH, whatever its case: Windows spells it Path. */
-function pathOf(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): string {
-  if (platform !== "win32") return env.PATH ?? "";
-  const name = Object.keys(env).find((key) => key.toUpperCase() === "PATH");
-  return name ? (env[name] ?? "") : "";
-}
-
 export function sameFolder(a: string, b: string, platform: NodeJS.Platform): boolean {
   const [x, y] = [resolve(a), resolve(b)];
   return platform === "win32" ? x.toLowerCase() === y.toLowerCase() : x === y;
 }
 
-/** Whether `entry` is `folder` or inside it. */
-function within(entry: string, folder: string, platform: NodeJS.Platform): boolean {
-  // path.relative compares without case on Windows, and across drives gives an absolute path.
-  const rel = (platform === "win32" ? win32 : posix).relative(resolve(folder), resolve(entry));
-  return !(rel.startsWith("..") || isAbsolute(rel));
-}
-
 /**
- * git's full path from PATH, or null. Skipped: an empty or relative entry, since both mean the current
- * folder; the current folder and anything inside it, which the project controls; and any entry inside
- * a node_modules folder, which `npx` and package scripts put first on PATH and any dependency can
- * fill. On Windows only git.exe counts: a .cmd or .bat would need a shell.
+ * git's full path from PATH, or null, by findProgram's rules: never the current folder, anything in
+ * it, or a node_modules folder. On Windows only git.exe counts: a .cmd or .bat would need a shell.
  */
 export function findGit(env: NodeJS.ProcessEnv, cwd: string, platform: NodeJS.Platform = process.platform): string | null {
-  const separator = platform === "win32" ? ";" : ":";
-  const name = platform === "win32" ? "git.exe" : "git";
-  for (const raw of pathOf(env, platform).split(separator)) {
-    const entry = raw.trim().replace(/^"(.*)"$/, "$1");
-    if (!entry || !isAbsolute(entry) || within(entry, cwd, platform)) continue;
-    if (entry.split(/[\\/]/).some((part) => part.toLowerCase() === "node_modules")) continue;
-    const candidate = join(entry, name);
-    try {
-      if (!statSync(candidate).isFile()) continue;
-      if (platform !== "win32") accessSync(candidate, constants.X_OK);
-      return candidate;
-    } catch {
-      // Not here, or not runnable: the next entry.
-    }
-  }
-  return null;
+  return findProgram("git", env, cwd, platform, [".exe"])?.path ?? null;
 }
 
 /**
