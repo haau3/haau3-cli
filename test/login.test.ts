@@ -406,12 +406,14 @@ describe("whoami", () => {
       plan: WHOAMI.plan,
       usage: WHOAMI.usage,
       session: { expiresAt: expect.any(String), store: "keyring", storeName: keyringName(), storePath: null },
+      // Switching organization is signing in again, and picking it on the approval page.
+      next: [{ command: "npx haau3 logout", description: "Sign out, then sign in again to pick another organization." }],
     });
     const [whoamiCall] = server.to("/api/cli/v1/whoami").slice(-1);
     expect(whoamiCall!.headers.authorization).toBe(`Bearer ${ACCESS_TOKEN}`);
   });
 
-  it("reads as four lines at a terminal", async () => {
+  it("reads as five lines at a terminal, the last how to act for another organization", async () => {
     await signIn();
     const out = await cli(["whoami"], { tty: true });
     const lines = out.stdout.split("\n");
@@ -419,6 +421,8 @@ describe("whoami", () => {
     expect(lines[1]).toBe("Plan: Developer. 312 of 1,000 requests this month.");
     expect(lines[2]).toMatch(/^The session ends at .+, in 60 minutes\.$/);
     expect(lines[3]).toBe(`It is kept in ${keyringName()}.`);
+    expect(lines[4]).toBe("To act for another organization, sign out, then sign in and pick it on the approval page.");
+    expect(out.stdout).toContain("npx haau3 logout");
   });
 
   it("ends a session past its end without asking the platform", async () => {

@@ -98,6 +98,45 @@ export const WHOAMI = {
   usage: { count: 312, allowance: 1000, headline: "312 of 1,000 requests this month" },
 };
 
+/** The stand-in organization's keys, as the platform lists them: an active one, a managed one, a revoked one. */
+export const LISTED_KEY_ID = "3f2a1b4c-5d6e-4f70-8a9b-0c1d2e3f4a5b";
+export const MANAGED_KEY_ID = "4f2a1b4c-5d6e-4f70-8a9b-0c1d2e3f4a5c";
+export const REVOKED_KEY_ID = "5f2a1b4c-5d6e-4f70-8a9b-0c1d2e3f4a5d";
+export const UNKNOWN_KEY_ID = "6f2a1b4c-5d6e-4f70-8a9b-0c1d2e3f4a5e";
+/** The listed active key's prefix, and a key that has it, for a project that uses that key. */
+export const LISTED_PREFIX = ["haau3", "sk", "live", "Lst123"].join("_");
+export function listedKey(rest = "ListedKeyRestOfItsFortyThreeCharactersX"): string {
+  return `${LISTED_PREFIX}${rest}`;
+}
+export const LISTED_NAME = "laptop";
+
+export function listedKeys(): Record<string, unknown>[] {
+  const base = { orgId: WHOAMI.organization.id, createdBy: WHOAMI.member.id };
+  return [
+    { ...base, id: LISTED_KEY_ID, name: LISTED_NAME, keyPrefix: LISTED_PREFIX, createdAt: "2026-11-10T12:00:00.000Z", lastUsedAt: "2026-11-12T09:30:00.000Z", revokedAt: null, managed: false, mode: "live", createdVia: "cli" },
+    { ...base, createdBy: null, id: MANAGED_KEY_ID, name: "Playground", keyPrefix: ["haau3", "sk", "test", "Mgd123"].join("_"), createdAt: "2026-11-01T08:00:00.000Z", lastUsedAt: null, revokedAt: null, managed: true, mode: "test", createdVia: "dashboard" },
+    { ...base, id: REVOKED_KEY_ID, name: "old server", keyPrefix: ["haau3", "sk", "live", "Old123"].join("_"), createdAt: "2026-10-01T08:00:00.000Z", lastUsedAt: "2026-10-20T08:00:00.000Z", revokedAt: "2026-11-02T10:00:00.000Z", managed: false, mode: "live", createdVia: "dashboard" },
+  ];
+}
+
+/** What the platform answers when keys are listed or one is read. */
+export type KeyReadAnswer = "ok" | "unauthorized" | "not-a-member" | "unavailable" | "garbled" | "off" | "refused";
+
+/** What the platform answers when a key is revoked, beyond what the stand-in's keys decide. */
+export type RevokeKeyAnswer =
+  | "revoked"
+  /** Another request revoked it after the check: the sign-in is spent. */
+  | "raced"
+  /** The key went after the check: the sign-in is spent. */
+  | "gone"
+  | "unauthorized"
+  | "not-a-member"
+  | "unavailable"
+  | "no-answer"
+  | "garbled"
+  | "refused"
+  | "off";
+
 /** What the API's metadata answers, for doctor: `echo` repeats what it was sent, as a broken server might. */
 export type ApiAnswer = "ok" | "unauthorized" | "rate-limited" | "unavailable" | "echo";
 
@@ -133,6 +172,11 @@ export class FakeServer {
   keysAnswer: KeysAnswer = "created";
   /** Runs when a key is asked for, before the answer: to change the project meanwhile. */
   onKeys: (() => void) | null = null;
+  /** The organization's keys, which listing, reading and revoking read and change. */
+  listed: Record<string, unknown>[] = listedKeys();
+  listAnswer: KeyReadAnswer = "ok";
+  readAnswer: KeyReadAnswer = "ok";
+  revokeKeyAnswer: RevokeKeyAnswer = "revoked";
   /** How many token requests were answered, the spent code's included. */
   get polls(): number {
     return this.#polls;
@@ -182,8 +226,53 @@ export class FakeServer {
       res.writeHead(status, { "Content-Type": "application/json", ...requestId, ...headers });
       res.end(JSON.stringify(value));
     };
-    const problem = (status: number, code: string, headers: Record<string, string> = {}) =>
-      json(status, { type: "about:blank", title: "Refused", status, detail: "Not today.", code }, headers);
+    const problem = (status: number, code: string, headers: Record<string, string> = {}, extra: Record<string, unknown> = {}) =>
+      json(status, { type: "about:blank", title: "Refused", status, detail: "Not today.", code, ...extra }, headers);
+    const challenge = { "WWW-Authenticate": `Bearer resource_metadata="${this.url}/.well-known/oauth-protected-resource/api/cli/v1"` };
+    const signedIn = () => req.headers.authorization === `Bearer ${ACCESS_TOKEN}` && this.#live;
+    /** The scripted refusals a read of keys can meet, or false to answer it. */
+    const readRefused = (answer: KeyReadAnswer): boolean => {
+      if (answer === "off") return (problem(404, "not-found"), true);
+      if (!signedIn() || answer === "unauthorized") return (problem(401, "unauthorized", challenge), true);
+      if (answer === "not-a-member") return (problem(403, "not-a-member"), true);
+      if (answer === "unavailable") return (problem(503, "unavailable", { "Retry-After": "30" }), true);
+      if (answer === "refused") return (problem(400, "invalid-request"), true);
+      return false;
+    };
+
+    // One key, and its revoke: the id is in the path.
+    const keyPath = /^\/api\/cli\/v1\/keys\/([^/]+)(\/revoke)?$/.exec(path);
+    if (keyPath) {
+      const id = decodeURIComponent(keyPath[1]!);
+      const key = this.listed.find((k) => k.id === id);
+      if (!keyPath[2]) {
+        if (req.method !== "GET") return problem(405, "method-not-allowed");
+        if (readRefused(this.readAnswer)) return;
+        if (!key) return problem(404, "key-not-found", {}, { signInEnded: false });
+        if (this.readAnswer === "garbled") return json(200, { ...key, keyPrefix: "nope" });
+        return json(200, key, { "Cache-Control": "no-store" });
+      }
+      if (req.method !== "POST") return problem(405, "method-not-allowed");
+      const answer = this.revokeKeyAnswer;
+      if (answer === "off") return problem(404, "not-found");
+      if (!signedIn() || answer === "unauthorized") return problem(401, "unauthorized", challenge);
+      if (answer === "not-a-member") return problem(403, "not-a-member");
+      if (answer === "refused" || body !== "") return problem(400, "invalid-request");
+      // The refusals that spend nothing come before the sign-in ends, as the platform orders them.
+      if (!key) return problem(404, "key-not-found", {}, { signInEnded: false });
+      if (key.managed === true) return problem(409, "managed-key");
+      if (key.revokedAt !== null) return problem(409, "already-revoked", {}, { revokedAt: key.revokedAt, signInEnded: false });
+      // From here the sign-in has ended.
+      this.#live = false;
+      if (answer === "no-answer") return void res.destroy();
+      if (answer === "unavailable") return problem(503, "unavailable", { "Retry-After": "30" });
+      if (answer === "gone") return problem(404, "key-not-found", {}, { signInEnded: true });
+      const revokedAt = "2026-11-12T15:00:00.000Z";
+      key.revokedAt = revokedAt;
+      if (answer === "raced") return problem(409, "already-revoked", {}, { revokedAt, signInEnded: true });
+      if (answer === "garbled") return json(200, { id: key.id });
+      return json(200, key, { "Cache-Control": "no-store" });
+    }
 
     switch (path) {
       case "/.well-known/oauth-protected-resource/api/cli/v1": {
@@ -266,7 +355,6 @@ export class FakeServer {
         return;
       }
       case "/api/cli/v1/whoami": {
-        const challenge = { "WWW-Authenticate": `Bearer resource_metadata="${this.url}/.well-known/oauth-protected-resource/api/cli/v1"` };
         if (req.headers.authorization !== `Bearer ${ACCESS_TOKEN}` || !this.#live) return problem(401, "unauthorized", challenge);
         if (this.whoamiAnswer === "unauthorized") return problem(401, "unauthorized", challenge);
         if (this.whoamiAnswer === "not-a-member" || this.whoamiAnswer === "no-organization") return problem(403, this.whoamiAnswer);
@@ -278,7 +366,14 @@ export class FakeServer {
         return json(200, { ...WHOAMI, organization, session: { expiresAt } }, { "Cache-Control": "no-store" });
       }
       case "/api/cli/v1/keys": {
-        const challenge = { "WWW-Authenticate": `Bearer resource_metadata="${this.url}/.well-known/oauth-protected-resource/api/cli/v1"` };
+        if (req.method === "GET") {
+          if (readRefused(this.listAnswer)) return;
+          const all = new URL(req.url ?? "/", this.url).searchParams.get("include") === "revoked";
+          const keys = this.listed.filter((k) => all || k.revokedAt === null);
+          const revokedOmitted = all ? 0 : this.listed.length - keys.length;
+          if (this.listAnswer === "garbled") return json(200, { keys: [{ id: "nope" }], hasMore: false, revokedOmitted });
+          return json(200, { keys, hasMore: false, revokedOmitted }, { "Cache-Control": "no-store" });
+        }
         if (this.keysAnswer === "off") return problem(404, "not-found");
         if (req.method !== "POST") return problem(405, "method-not-allowed");
         if (req.headers.authorization !== `Bearer ${ACCESS_TOKEN}` || !this.#live) return problem(401, "unauthorized", challenge);

@@ -17,13 +17,19 @@ import {
   type ApiAnswer,
   DEVICE_CODE,
   FakeServer,
+  LISTED_KEY_ID,
+  listedKeys,
+  MANAGED_KEY_ID,
   NEW_KEY_CORE,
   NEW_KEY_MARKERS,
   QUERY_MARKER,
   newKey,
   REFRESH_TOKEN,
+  REVOKED_KEY_ID,
   SIGN_IN_MARKERS,
+  UNKNOWN_KEY_ID,
   type KeysAnswer,
+  type RevokeKeyAnswer,
   type TokenAnswer,
   type WhoamiAnswer,
 } from "./fake-server.js";
@@ -92,6 +98,15 @@ const COMMANDS: [string, string[]][] = [
   ["the key after a flag's value took the command's word", ["--name", "keys", IN_ENVIRONMENT]],
   ["the key after --file took the command's word", ["--file", "keys", IN_ENVIRONMENT, "create"]],
   ["the key as Node's own --env-file", ["keys", "create", `--env-file=${IN_ENVIRONMENT}`]],
+  ["keys list", ["keys", "list"]],
+  ["keys list --all", ["keys", "list", "--all"]],
+  ["keys revoke", ["keys", "revoke", LISTED_KEY_ID]],
+  ["keys revoke with no id", ["keys", "revoke"]],
+  ["the key as keys revoke's id", ["keys", "revoke", IN_ENVIRONMENT]],
+  ["the key after keys revoke's id", ["keys", "revoke", LISTED_KEY_ID, IN_ENVIRONMENT]],
+  ["the key after keys list", ["keys", "list", IN_ENVIRONMENT]],
+  ["the key as --all's value", ["keys", "list", `--all=${IN_ENVIRONMENT}`]],
+  ["the key as a flag of keys revoke", ["keys", "revoke", LISTED_KEY_ID, `--${IN_ENVIRONMENT}`]],
   ["doctor", ["doctor"]],
   ["doctor --file", ["doctor", "--file", ".env"]],
   ["the key after doctor", ["doctor", IN_ENVIRONMENT]],
@@ -376,6 +391,54 @@ describe("a new key is written to the env file and nowhere else", () => {
       rmSync(keys, { recursive: true, force: true });
     }
   });
+});
+
+/** What the stand-in can answer when a key is revoked, each run through every way of running. */
+const REVOKE_ANSWERS: RevokeKeyAnswer[] = ["revoked", "raced", "gone", "unauthorized", "not-a-member", "unavailable", "no-answer", "garbled", "refused", "off"];
+
+describe("listing and revoking keys never prints a key", () => {
+  for (const answer of REVOKE_ANSWERS) {
+    it(`when a revoke is answered ${answer}, a key's name holding a planted key`, async () => {
+      for (const person of [false, true]) {
+        for (const output of ["", "json", "text"]) {
+          for (const keyring of [memoryKeyring(), unreachableKeyring()]) {
+            // The keys page takes any name, a key included: the platform lists it as it is.
+            const listed = listedKeys();
+            listed[0]!.name = `prod ${IN_ENV}`;
+            listed[2]!.name = IN_ENV_LOCAL;
+            Object.assign(server, { listed, tokenAnswers: ["approved"], whoamiAnswer: "ok", revokeStatus: 200, revokeKeyAnswer: answer, listAnswer: "ok", readAnswer: "ok" });
+            const store = testStore(dir, keyring);
+            const env = { HAAU3_API_KEY: IN_ENVIRONMENT, HAAU3_OUTPUT: output, HAAU3_PLATFORM_URL: server.url };
+            const shown: string[] = [];
+            const confirm = async (question: string, prompt: string) => (shown.push(question, prompt), true);
+            const io = {
+              store,
+              ...fakeClock(),
+              ...(person ? { stdin: { isTTY: true }, openBrowser: async () => true, enter: () => ({ pressed: Promise.resolve(), stop() {} }), confirm } : {}),
+            };
+            const run = async (args: string[]) => {
+              const out = await runCli(args, { tty: person, env, cwd: project, io });
+              assertClean(out.stdout, `stdout of keys ${args[1]}`);
+              assertClean(out.stderr, `stderr of keys ${args[1]}`);
+            };
+            await run(["login"]);
+            await run(["login", "--complete"]);
+            await run(["keys", "list"]);
+            await run(["keys", "list", "--all"]);
+            for (const id of [MANAGED_KEY_ID, REVOKED_KEY_ID, UNKNOWN_KEY_ID, IN_ENVIRONMENT, LISTED_KEY_ID]) await run(["keys", "revoke", id]);
+            await run(["keys", "list"]);
+            await run(["whoami"]);
+            await run(["logout"]);
+            await store.clear(server.url);
+            // What a person was asked showed no key either.
+            for (const text of shown) assertClean(text, "the question");
+          }
+        }
+      }
+      // The typed key was never sent anywhere.
+      expect(server.requests.map((r) => r.path + r.body).join("")).not.toContain(IN_ENVIRONMENT);
+    });
+  }
 });
 
 /** Planted under other names, where doctor looks for a near-miss: their values and names are never printed. */
