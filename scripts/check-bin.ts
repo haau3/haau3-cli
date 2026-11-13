@@ -2,7 +2,8 @@
 // line from there the way `npx haau3` does, on whatever operating system this runs on. Run after
 // `pnpm build`.
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { FORMAT_VERSION } from "../src/output.js";
 
@@ -85,6 +86,27 @@ expect(
   `doctor printed ${JSON.stringify(doctor.stdout.slice(0, 200))}, exit ${doctor.status}`,
 );
 expect(!doctor.stdout.includes("CHECKBIN") && !doctor.stderr.includes("CHECKBIN"), "doctor printed the key");
+
+// init from the install, in a new npm project outside any repository: the real npm on this system's
+// PATH adds the SDK (a .cmd shim on Windows, started through cmd.exe), and a second run changes nothing.
+const fresh = mkdtempSync(join(tmpdir(), "check-bin-init-"));
+try {
+  writeFileSync(join(fresh, "package.json"), JSON.stringify({ name: "check-bin-init", version: "1.0.0", private: true }));
+  const cli = join(work, "project", "node_modules", "haau3", "dist", "cli.mjs");
+  const init = () => {
+    const ran = spawnSync(process.execPath, [cli, "init", "--no-agent", "--json"], { cwd: fresh, encoding: "utf8", env: { ...process.env, HAAU3_OUTPUT: "" }, timeout: 300_000 });
+    return { status: ran.status, document: parse(ran.stdout) };
+  };
+  const first = init();
+  const sdk = first.document?.data?.checks?.find((c: { name: string }) => c.name === "sdk");
+  const manifest = JSON.parse(readFileSync(join(fresh, "package.json"), "utf8")) as { dependencies?: Record<string, string> };
+  expect(first.status === 0 && first.document?.ok === true && sdk?.status === "pass", `init exited ${first.status}: ${JSON.stringify(sdk ?? first.document?.error ?? null).slice(0, 200)}`);
+  expect(typeof manifest.dependencies?.["@haau3/sdk"] === "string", "init did not add @haau3/sdk to package.json");
+  const second = init();
+  expect(second.status === 0 && JSON.stringify(second.document?.data?.changed) === "[]", `init's second run changed ${JSON.stringify(second.document?.data?.changed)}`);
+} finally {
+  rmSync(fresh, { recursive: true, force: true });
+}
 
 // A store that cannot load falls back to the file without a word, so the check above cannot tell.
 // Load it as the installed command line would, from its own folder: this system's prebuilt package

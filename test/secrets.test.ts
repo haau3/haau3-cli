@@ -105,6 +105,14 @@ const COMMANDS: [string, string[]][] = [
   ["the key after test's service", ["test", "fhir-base", IN_ENVIRONMENT]],
   ["the key as test's --file", ["test", "--file", IN_ENVIRONMENT]],
   ["the key as test's --all value", ["test", `--all=${IN_ENVIRONMENT}`]],
+  ["init", ["init"]],
+  ["init --no-agent", ["init", "--no-agent"]],
+  ["init --file", ["init", "--no-agent", "--file", ".env"]],
+  ["the key after init", ["init", IN_ENVIRONMENT]],
+  ["the key as init's --agent", ["init", "--agent", IN_ENVIRONMENT]],
+  ["the key as init's --language", ["init", `--language=${IN_ENVIRONMENT}`]],
+  ["the key as init's --package-manager", ["init", "--package-manager", IN_ENVIRONMENT]],
+  ["the key as init's --file", ["init", "--file", IN_ENVIRONMENT]],
 ];
 
 let project: string;
