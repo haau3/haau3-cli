@@ -34,6 +34,44 @@ is optional: `npx haau3 keys create --test` makes one, which reaches the Sandbox
 
 ## Commands
 
+### init
+
+```sh
+npx haau3 init
+```
+
+Sets the project in this folder up to use haau3, and writes no application code:
+
+- It installs haau3's SDK with the project's own package manager (npm, pnpm, Yarn, Bun, uv, Poetry,
+  Pipenv or Go), which records it in the manifest. In a pip project it installs nothing and names
+  the line to add, since pip records nothing.
+- It adds the haau3 skill, read from docs.haau3.com, and the docs' MCP server,
+  `https://docs.haau3.com/mcp`, for each coding agent the project uses, in the project's own files:
+  Claude Code, Cursor, Codex, VS Code or Gemini CLI.
+- It checks that git ignores the env file the key goes in, and names the line to add when it does
+  not.
+
+It ends with the next steps, including how your program loads the env file. Run again, it changes
+nothing, and the `changed` list in its JSON output is empty.
+
+```sh
+npx haau3 init --agent claude-code
+npx haau3 init --no-agent
+```
+
+- `--agent <agent>` sets up that coding agent: `claude-code`, `cursor`, `codex`, `vscode` or
+  `gemini-cli`, given once for each. By default it sets up the agents the project's files show, and
+  the agent running it.
+- `--no-agent` sets up no coding agent: only the SDK and the env file.
+- `--language <language>` names the project to set up, `node`, `python` or `go`, when the folder
+  holds more than one.
+- `--package-manager <name>` names the package manager when the project's files name more than one.
+- `--file <file>` checks that env file in place of `.env.local` and `.env`.
+
+With no terminal it asks nothing: a choice it cannot make from the project's files is a refusal that
+names the flag. It never edits a manifest by hand, a `.gitignore`, or an MCP entry that is already
+there for another server.
+
 ### doctor
 
 ```sh
@@ -117,8 +155,9 @@ its own approval.
 - `--name <name>` names the key. By default the name says haau3 made it, for which folder and on
   which day.
 - `--file <file>` writes to that env file. By default it writes to the file that already holds the
-  key, else `.env.local`, else `.env`, else a new `.env.local` for Next.js or Vite and `.env`
-  otherwise.
+  key. Otherwise, for Next.js, it writes to `.env.local` if there is one, else `.env`, else a new
+  `.env.local`. For any other project it writes to `.env`, Vite included, since Vite does not load
+  env files into `process.env`.
 - `--replace` replaces a key the file already holds. The old key is not revoked.
 
 In a git repository it writes only to a file git ignores. Otherwise it refuses and names the line to
@@ -130,7 +169,10 @@ add to the `.gitignore`.
 - It never prints an answer's body.
 - It sends only the spec's own example requests, never a payload you give it.
 - It never edits a `.gitignore`.
-- It sends a key only to `api.haau3.com`, `sandbox.haau3.com` or this computer.
+- It never writes application code, and never edits a manifest by hand: the project's own package
+  manager records the SDK.
+- It sends a key only to `api.haau3.com`, `sandbox.haau3.com` or this computer. It reads the skill
+  from `docs.haau3.com`, and sends it no key and no session.
 - A session can do only what its member can do on the dashboard.
 
 ## For coding agents
@@ -138,7 +180,8 @@ add to the `.gitignore`.
 When a coding agent runs it, every command prints one JSON document, never a prompt. Run
 `npx haau3 doctor --json` first, branch on `ok`, and run the commands in `next`. To make a key, run
 `login`, give the person the page and the code it prints, then run `login --complete` and
-`keys create`. The key goes into the env file, never through the chat.
+`keys create`. The key goes into the env file, never through the chat. `npx haau3 init` adds the
+haau3 skill and the docs' MCP server for the project's coding agents.
 
 ## Output
 
@@ -158,7 +201,7 @@ The document:
 {
   "formatVersion": "1.3",
   "cli": "haau3",
-  "cliVersion": "0.1.8",
+  "cliVersion": "0.1.9",
   "command": null,
   "ok": false,
   "environment": null,
@@ -175,7 +218,7 @@ The document:
   field you don't know. A new major version changes or removes one, so refuse a major version you
   don't know.
 - Every field is always present. Branch on `ok`. On success `error` is `null`. On failure `data` is
-  `null`, except for `doctor` and `test`, whose report is in `data` either way (since 1.3).
+  `null`, except for `doctor`, `test` and `init`, whose report is in `data` either way (since 1.3).
 - `environment` is `production` or `sandbox` when the document is about an API key or a call to the
   API, and `null` otherwise.
 - `error.code` is what to branch on, and `error.next` lists commands to run next. On success,
@@ -194,11 +237,12 @@ Exit codes: `0`, it worked; `1`, it ran and something failed; `2`, it was used w
 
 | Variable | What it does |
 |---|---|
-| `HAAU3_API_KEY` | The API key: from the environment, else the project's env files, as its loader reads them (`.env.local`, then `.env` for Next.js or Vite; `.env` otherwise). |
+| `HAAU3_API_KEY` | The API key: from the environment, else the project's env files, as its loader reads them (`.env.local`, then `.env` for Next.js; `.env` otherwise). |
 | `HAAU3_ENVIRONMENT` | `production` or `sandbox`: the environment to call. With `sandbox`, no key is needed. |
 | `HAAU3_BASE_URL` | Call the API at another address, such as a stand-in, for development. |
 | `HAAU3_OUTPUT` | `json` or `text`: the output to print, whatever the terminal. |
 | `HAAU3_PLATFORM_URL` | Sign in at another address than `https://platform.haau3.com`, for development. |
+| `HAAU3_DOCS_URL` | Read the haau3 skill and name the docs' MCP server at another address than `https://docs.haau3.com`, for development. |
 | `HAAU3_SESSION_STORE` | `file`: keep the session in a file only you can read, not the system's credential store. |
 | `HAAU3_CONFIG_DIR` | The folder for that file. By default `~/.config/haau3`, or `%APPDATA%\haau3` on Windows. |
 

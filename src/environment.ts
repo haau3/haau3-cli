@@ -19,6 +19,14 @@ export const DEFAULT_PLATFORM_URL = "https://platform.haau3.com";
 /** Points signing in at another copy of the platform, for development. */
 export const PLATFORM_URL_VARIABLE = "HAAU3_PLATFORM_URL";
 
+/** The docs' address, where `init` reads the haau3 skill and names the docs' MCP server. */
+export const DEFAULT_DOCS_URL = "https://docs.haau3.com";
+
+/** Points `init` at another copy of the docs, for development. */
+export const DOCS_URL_VARIABLE = "HAAU3_DOCS_URL";
+
+export type DocsResult = { ok: true; docsURL: string } | { ok: false; error: CliError };
+
 export type PlatformResult = { ok: true; platformURL: string } | { ok: false; error: CliError };
 
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
@@ -53,6 +61,17 @@ export function resolvePlatform(env: NodeJS.ProcessEnv): PlatformResult {
   const checked = checkAddress(configured);
   if (!checked.ok) return { ok: false, error: invalidAddress(PLATFORM_URL_VARIABLE, checked.why, "invalid-platform-url", `Sign in at ${DEFAULT_PLATFORM_URL}, the address it has unless you are developing against another.`) };
   return { ok: true, platformURL: checked.address };
+}
+
+/** The docs' address: docs.haau3.com, or HAAU3_DOCS_URL by the same rules. No key or session ever goes there. */
+export function resolveDocs(env: NodeJS.ProcessEnv): DocsResult {
+  const configured = env[DOCS_URL_VARIABLE]?.trim();
+  if (!configured) return { ok: true, docsURL: DEFAULT_DOCS_URL };
+  // Its address is printed and written into MCP files, so it may hold no key.
+  if (/haau3_sk_/i.test(configured)) return { ok: false, error: invalidAddress(DOCS_URL_VARIABLE, "holds an API key", "invalid-docs-url", `Read the skill from ${DEFAULT_DOCS_URL}.`) };
+  const checked = checkAddress(configured);
+  if (!checked.ok) return { ok: false, error: invalidAddress(DOCS_URL_VARIABLE, checked.why, "invalid-docs-url", `Read the skill from ${DEFAULT_DOCS_URL}, the address it has unless you are developing against another.`) };
+  return { ok: true, docsURL: checked.address };
 }
 
 function invalidAddress(variable: string, why: string, code: string, description: string): CliError {

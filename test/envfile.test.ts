@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseEnv } from "node:util";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { chooseFile, inspectFile, planEdit, planFor, shownPrefix, writeKey } from "../src/envfile.js";
+import { chooseFile, inspectFile, planEdit, planFor, readsEnvLocal, shownPrefix, writeKey } from "../src/envfile.js";
 import { ApiKey } from "../src/key.js";
 
 /** Built from parts, so no file in this repository holds a whole key-shaped string. */
@@ -107,13 +107,24 @@ describe("choosing the file", () => {
     expect(choose()).toMatchObject({ shown: ".env" });
   });
 
-  it("takes the file the project has, .env.local first in a Next.js or Vite project and .env alone in any other", () => {
+  it("takes the file the project has, .env.local first in a Next.js project and .env alone in any other", () => {
     writeFileSync(join(project, ".env"), "A=1\n");
     expect(choose()).toMatchObject({ shown: ".env", reason: "existing" });
     writeFileSync(join(project, ".env.local"), "B=1\n");
     expect(choose()).toMatchObject({ shown: ".env", reason: "existing" });
-    writeFileSync(join(project, "package.json"), JSON.stringify({ devDependencies: { vite: "8.0.0" } }));
+    writeFileSync(join(project, "package.json"), JSON.stringify({ devDependencies: { next: "16.0.0" } }));
     expect(choose()).toMatchObject({ shown: ".env.local", reason: "existing" });
+  });
+
+  // Vite loads env files into import.meta.env, never into the process.env a server reads.
+  it("treats a Vite project as any other: .env, never .env.local", () => {
+    writeFileSync(join(project, "package.json"), JSON.stringify({ devDependencies: { vite: "8.0.0" } }));
+    expect(readsEnvLocal(project)).toBe(false);
+    expect(choose()).toMatchObject({ shown: ".env", reason: "default" });
+    writeFileSync(join(project, ".env.local"), "B=1\n");
+    expect(choose()).toMatchObject({ shown: ".env", reason: "default" });
+    writeFileSync(join(project, "package.json"), JSON.stringify({ dependencies: { next: "16.0.0" }, devDependencies: { vite: "8.0.0" } }));
+    expect(readsEnvLocal(project)).toBe(true);
   });
 
   it("takes the first file that defines the key, even empty, which is the one the loader reads", () => {

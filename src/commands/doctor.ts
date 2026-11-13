@@ -203,7 +203,7 @@ function keyCheck(settings: Settings, file: string | undefined, platform: NodeJS
       return check("key", "warn", `${head}. ${found.source} starts with a byte-order mark, so Node's --env-file and Vite skip that first line; Next.js reads it. Save the file as UTF-8 without the mark.`, [], details);
     }
     if (settings.unloadedKey) {
-      return check("key", "warn", `${head}. ${settings.unloadedKey.source} also holds a key, which this project's loader does not read: only Next.js and Vite load it.`, [], details);
+      return check("key", "warn", `${head}. ${settings.unloadedKey.source} also holds a key, which this project's loader does not read: only Next.js loads it.`, [], details);
     }
     return check("key", "pass", `${head}.`, [], details);
   }
@@ -226,7 +226,7 @@ function keyCheck(settings: Settings, file: string | undefined, platform: NodeJS
   const why = emptyKey
     ? `${KEY_VARIABLE} is set but empty ${where(emptyKey)}, which hides any value a later file gives it, as applications read them.`
     : settings.unloadedKey
-      ? `${KEY_VARIABLE} is in ${settings.unloadedKey.source}, which this project's loader does not read: only Next.js and Vite load it. Move it to .env.`
+      ? `${KEY_VARIABLE} is in ${settings.unloadedKey.source}, which this project's loader does not read: only Next.js loads it. Move it to .env.`
       : unread
         ? `${unread.shown} has a ${KEY_VARIABLE} line that Node's parser does not read, though some loaders do. Write it as ${KEY_VARIABLE}=<key> on a line of its own.`
         : `${KEY_VARIABLE} is not set in ${looked(settings.files)}.`;

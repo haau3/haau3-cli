@@ -7,7 +7,8 @@ import { login } from "./commands/login.js";
 import { logout } from "./commands/logout.js";
 import { test } from "./commands/test.js";
 import { whoami } from "./commands/whoami.js";
-import type { Context, Result } from "./commands/context.js";
+import { init } from "./commands/init.js";
+import type { Ask, Context, Result } from "./commands/context.js";
 import { HELP, helpText } from "./help.js";
 import {
   agentDetected,
@@ -42,6 +43,8 @@ export interface Io {
   openBrowser?: (url: string) => Promise<boolean>;
   /** The fetch the API's client sends with. The global one by default. */
   fetch?: typeof fetch;
+  /** Asks a person at a terminal to pick. Only used when a person is at a terminal. */
+  ask?: Ask;
 }
 
 const GLOBAL_OPTIONS = {
@@ -83,6 +86,27 @@ const COMMANDS = new Map<string, Command | Group>([
   ["whoami", { options: {}, run: (ctx) => whoami(ctx) }],
   ["logout", { options: {}, run: (ctx) => logout(ctx) }],
   ["keys", { sub: KEYS }],
+  // --file as doctor's; every choice init cannot make from the project's files is one of these flags.
+  [
+    "init",
+    {
+      options: {
+        language: { type: "string" },
+        "package-manager": { type: "string" },
+        agent: { type: "string", multiple: true },
+        "no-agent": { type: "boolean" },
+        file: { type: "string" },
+      },
+      run: (ctx, values) =>
+        init(ctx, {
+          language: stringValue(values.language),
+          packageManager: stringValue(values["package-manager"]),
+          agents: Array.isArray(values.agent) ? values.agent.filter((a): a is string => typeof a === "string") : [],
+          noAgent: values["no-agent"] === true,
+          file: stringValue(values.file),
+        }),
+    },
+  ],
   // --file, not --env-file, for the reason keys create gives.
   ["doctor", { options: { file: { type: "string" } }, run: (ctx, values) => doctor(ctx, { file: stringValue(values.file) }) }],
   // One argument, the service; --file as doctor's.
@@ -222,6 +246,7 @@ function context(io: Io, format: Format): Context {
     },
     enter: interactive ? io.enter : undefined,
     openBrowser: interactive ? io.openBrowser : undefined,
+    ask: interactive ? io.ask : undefined,
     fetch: io.fetch,
   };
 }

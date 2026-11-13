@@ -1,7 +1,47 @@
 // What the command line does only for a person at a terminal: wait for Enter, and open a page in the
 // browser. Neither ever runs with no terminal or when an agent is running the command.
 import { spawn } from "node:child_process";
+import { createInterface } from "node:readline/promises";
 import { isSafeAddress } from "./environment.js";
+
+/**
+ * The indexes a typed answer picks from `count` numbered choices: one number, or for `multiple` any
+ * numbers split by commas or spaces. Null when the answer is not that, so the question is asked again.
+ */
+export function parseChoice(answer: string, count: number, multiple: boolean): number[] | null {
+  const words = answer.split(/[\s,]+/).filter(Boolean);
+  if (words.length === 0 || (!multiple && words.length > 1)) return null;
+  const picked: number[] = [];
+  for (const word of words) {
+    if (!/^\d{1,3}$/.test(word)) return null;
+    const n = Number(word);
+    if (n < 1 || n > count) return null;
+    if (!picked.includes(n - 1)) picked.push(n - 1);
+  }
+  return picked;
+}
+
+/** Asks on the terminal, at most three times, and reads one line each time. */
+export function askOnTerminal(stdin: NodeJS.ReadStream, stdout: NodeJS.WriteStream) {
+  return async (question: string, choices: string[], multiple: boolean): Promise<number[] | null> => {
+    const rl = createInterface({ input: stdin, output: stdout, terminal: false });
+    // Ctrl-D, or the input ending, closes the interface: no answer, so no choice.
+    const closed = new Promise<null>((resolve) => rl.once("close", () => resolve(null)));
+    try {
+      stdout.write(`${question}\n${choices.map((choice, i) => `  ${i + 1}. ${choice}`).join("\n")}\n`);
+      for (let tries = 0; tries < 3; tries++) {
+        const answer = await Promise.race([rl.question(multiple ? "Numbers, separated by commas: " : "Number: ").catch(() => null), closed]);
+        if (answer === null) return null;
+        const picked = parseChoice(answer, choices.length, multiple);
+        if (picked) return picked;
+      }
+      return null;
+    } finally {
+      rl.close();
+      stdin.pause();
+    }
+  };
+}
 
 /** Resolves when a line is entered on stdin. stop() stops listening, so the process can end. */
 export function listenForEnter(stdin: NodeJS.ReadStream): { pressed: Promise<void>; stop(): void } {

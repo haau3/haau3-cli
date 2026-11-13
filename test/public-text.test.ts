@@ -32,8 +32,14 @@ describe("the public-text check", () => {
       "* the first version ([#5](https://github.com/haau3/haau3-cli/issues/5))",
       "Write to hello@haau3.com. Co-Authored-By: Claude <noreply@anthropic.com>",
       "A key's prefix is haau3_sk_live_ or haau3_sk_test_.",
+      "init writes .claude/skills/haau3/SKILL.md and .agents/skills/haau3/SKILL.md.",
     ].join("\n");
     expect(found(text)).toEqual([]);
+  });
+
+  it("still finds another repository named in a link or after a path", () => {
+    expect(found("https://github.com/haau3/private-thing")).toEqual(["haau3/private-thing"]);
+    expect(found("the skills of haau3/private-thing")).toEqual(["haau3/private-thing"]);
   });
 
   it("allows a changelog link only to this repository", () => {

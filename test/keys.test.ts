@@ -122,16 +122,19 @@ describe("keys create, signed in", () => {
     expect(keyCalls()).toBe(1);
   });
 
-  it("writes .env.local for a Next.js or Vite project", async () => {
-    for (const framework of ["next", "vite"]) {
-      // Making a key ends the sign-in, so each key has its own.
-      if (framework === "vite") await signIn();
-      rmSync(join(project, ".env.local"), { force: true });
-      writeFileSync(join(project, "package.json"), JSON.stringify({ dependencies: framework === "next" ? { next: "16.0.0" } : {}, devDependencies: framework === "vite" ? { vite: "7.0.0" } : {} }));
-      const out = await cli(["keys", "create"]);
-      expect(json(out.stdout).data.envFile.path).toBe(".env.local");
-      expect(existsSync(join(project, ".env"))).toBe(false);
-    }
+  it("writes .env.local for a Next.js project, and .env for a Vite one, which loads neither into process.env", async () => {
+    writeFileSync(join(project, "package.json"), JSON.stringify({ dependencies: { next: "16.0.0" } }));
+    const next = await cli(["keys", "create"]);
+    expect(json(next.stdout).data.envFile.path).toBe(".env.local");
+    expect(existsSync(join(project, ".env"))).toBe(false);
+
+    // Making a key ends the sign-in, so each key has its own.
+    await signIn();
+    rmSync(join(project, ".env.local"), { force: true });
+    writeFileSync(join(project, "package.json"), JSON.stringify({ devDependencies: { vite: "7.0.0" } }));
+    const vite = await cli(["keys", "create"]);
+    expect(json(vite.stdout).data.envFile.path).toBe(".env");
+    expect(existsSync(join(project, ".env.local"))).toBe(false);
   });
 
   it("writes to the file that holds the key, and replaces it only with --replace", async () => {
@@ -165,6 +168,17 @@ describe("keys create, signed in", () => {
     expect(out.code).toBe(0);
     expect(json(out.stdout).data.replaced).toBeNull();
     expect(read(".env")).toBe(`HAAU3_API_KEY=${newKey("live")}\nPORT=3000\n`);
+  });
+
+  it("says a named .env.local is not read by default outside Next.js, as in a Vite project", async () => {
+    writeFileSync(join(project, "package.json"), JSON.stringify({ devDependencies: { vite: "8.0.0" } }));
+    const vite = json((await cli(["keys", "create", "--file", ".env.local"])).stdout).data;
+    expect(vite.warnings.find((w: { code: string }) => w.code === "env-file-not-default")?.message).toContain("This project's loader reads .env by default.");
+    await signIn();
+    rmSync(join(project, ".env.local"));
+    writeFileSync(join(project, "package.json"), JSON.stringify({ dependencies: { next: "16.0.0" } }));
+    const next = json((await cli(["keys", "create", "--file", ".env.local"])).stdout).data;
+    expect(next.warnings.map((w: { code: string }) => w.code)).not.toContain("env-file-not-default");
   });
 
   it("writes to --file, which must name an env file, and says when the defaults will not read it", async () => {
@@ -237,7 +251,7 @@ describe("keys create in a git repository", () => {
   });
 
   it("refuses a file git does not ignore, with the line to add, and asks the platform for nothing", async () => {
-    writeFileSync(join(project, "package.json"), JSON.stringify({ devDependencies: { vite: "7.0.0" } }));
+    writeFileSync(join(project, "package.json"), JSON.stringify({ devDependencies: { next: "16.0.0" } }));
     const out = await cli(["keys", "create"]);
     expect(out.code).toBe(1);
     const document = json(out.stdout);

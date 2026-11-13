@@ -53,8 +53,9 @@ export interface CliError {
 
 /**
  * Every command prints one of these. Each field is always present. On success error is null; on
- * failure data is null, except for a command whose answer is a report, `doctor`, which carries its
- * data either way (format 1.3), so a failing run still lists what it checked.
+ * failure data is null, except for a command whose answer is a report (`doctor` and `test` since
+ * format 1.3, `init` from its first release), which carries its data either way, so a failing run
+ * still lists what it checked or did.
  */
 export interface Document<T = unknown> {
   formatVersion: typeof FORMAT_VERSION;

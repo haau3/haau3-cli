@@ -38,6 +38,12 @@ describe("help", () => {
 
   it("lists every command, and every variable the commands read", async () => {
     expect(HELP.commands.map((c) => c.name)).toEqual([
+      "init",
+      "init --agent <agent>",
+      "init --no-agent",
+      "init --language <language>",
+      "init --package-manager <name>",
+      "init --file <file>",
       "doctor",
       "doctor --file <file>",
       "test [service]",
@@ -59,11 +65,12 @@ describe("help", () => {
       "HAAU3_BASE_URL",
       "HAAU3_OUTPUT",
       "HAAU3_PLATFORM_URL",
+      "HAAU3_DOCS_URL",
       "HAAU3_SESSION_STORE",
       "HAAU3_CONFIG_DIR",
     ]);
     const text = (await runCli(["--help"])).stdout;
-    expect(text).toContain("Commands:\n  doctor ");
+    expect(text).toContain("Commands:\n  init ");
     for (const entry of [...HELP.commands, ...HELP.environment]) expect(text).toContain(entry.description);
   });
 });

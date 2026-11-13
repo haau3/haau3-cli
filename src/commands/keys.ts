@@ -15,8 +15,9 @@ import { basename, dirname, join, resolve } from "node:path";
 import { chooseFile, inspectFile, planFor, shownPath, standIn, writeKey, type Target } from "../envfile.js";
 import { resolvePlatform } from "../environment.js";
 import { gitAnswer, type GitAnswer } from "../git.js";
-import { environmentOf, KEY_FILES, KEY_VARIABLE } from "../key.js";
+import { environmentOf, KEY_VARIABLE } from "../key.js";
 import type { CliError, NextStep } from "../output.js";
+import { loadedFiles } from "../settings.js";
 import { createKey, type KeyMode, type MadeKey } from "../signin/keys.js";
 import { arg, COMPLETE_STEP, doctorStep, done, failed, fileFlag, LOGIN_STEP, misused, nextText, when, type Context, type Result } from "./context.js";
 import { organizationError } from "./login.js";
@@ -260,10 +261,13 @@ export async function keysCreate(ctx: Context, options: KeysCreateOptions): Prom
       message: `${KEY_VARIABLE} is also set in this shell's environment. Applications read that before an env file, so they keep using it until it is unset.`,
     });
   }
-  if (target.reason === "named" && !(KEY_FILES as readonly string[]).includes(basename(target.path))) {
+  // The files this project's loader reads by itself: .env.local and .env for Next.js, .env alone otherwise.
+  const loaded = loadedFiles(ctx.cwd);
+  const named = resolve(ctx.cwd, basename(target.path)) === resolve(target.path);
+  if (target.reason === "named" && !(named && loaded.includes(basename(target.path)))) {
     warnings.push({
       code: "env-file-not-default",
-      message: `Applications and haau3 read .env.local and .env by default. Load ${target.shown} yourself, such as with node --env-file=${arg(target.shown)}.`,
+      message: `This project's loader reads ${loaded.join(" and ")} by default. Load ${target.shown} yourself, such as with node --env-file=${arg(target.shown)}.`,
     });
   }
   if (git.kind === "no-repository") {

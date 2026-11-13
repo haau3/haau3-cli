@@ -1,4 +1,4 @@
-import { PLATFORM_URL_VARIABLE } from "./environment.js";
+import { DOCS_URL_VARIABLE, PLATFORM_URL_VARIABLE } from "./environment.js";
 import { BASE_URL_VARIABLE, ENVIRONMENT_VARIABLE, KEY_VARIABLE } from "./settings.js";
 import { OUTPUT_VARIABLE } from "./output.js";
 import { CONFIG_DIR_VARIABLE } from "./session/file.js";
@@ -21,6 +21,16 @@ export interface Help {
 export const HELP: Help = {
   usage: "haau3 [command] [options]",
   commands: [
+    {
+      name: "init",
+      description:
+        "Set this project up for haau3: its SDK through the project's package manager, the haau3 skill and the docs' MCP server for its coding agents, and git ignoring its env file. Writes no application code.",
+    },
+    { name: "init --agent <agent>", description: "Set up this coding agent: claude-code, cursor, codex, vscode or gemini-cli. Give it once for each agent." },
+    { name: "init --no-agent", description: "Set up no coding agent: only the SDK and the env file." },
+    { name: "init --language <language>", description: "node, python or go: the project to set up, when the folder holds more than one." },
+    { name: "init --package-manager <name>", description: "The package manager to install with, when the project's files name more than one." },
+    { name: "init --file <file>", description: "Check this env file in place of .env.local and .env." },
     {
       name: "doctor",
       description: "Check that this project is ready to call the API: Node, the SDK, the key and where it is, git ignoring its file, and a call that proves the key works.",
@@ -51,11 +61,12 @@ export const HELP: Help = {
     { name: "--version", description: "Show the version." },
   ],
   environment: [
-    { name: KEY_VARIABLE, description: "The API key: here, else in the project's env files as its loader reads them (.env.local, then .env for Next.js or Vite; .env otherwise)." },
+    { name: KEY_VARIABLE, description: "The API key: here, else in the project's env files as its loader reads them (.env.local, then .env for Next.js; .env otherwise)." },
     { name: ENVIRONMENT_VARIABLE, description: "production or sandbox: the environment to call. With sandbox, no key is needed." },
     { name: BASE_URL_VARIABLE, description: "Call the API at another address, such as a stand-in, for development." },
     { name: OUTPUT_VARIABLE, description: "json or text: the output to print, whatever the terminal." },
     { name: PLATFORM_URL_VARIABLE, description: "Sign in at another address than https://platform.haau3.com, for development." },
+    { name: DOCS_URL_VARIABLE, description: "Read the haau3 skill and name the docs' MCP server at another address than https://docs.haau3.com, for development." },
     { name: STORE_VARIABLE, description: "file: keep the session in a file only you can read, not the system's credential store." },
     { name: CONFIG_DIR_VARIABLE, description: "The folder for that file. By default ~/.config/haau3, or %APPDATA%\\haau3 on Windows." },
   ],

@@ -1,14 +1,14 @@
 // Where the command line reads the settings the SDK takes, the way the project's own loader finds
 // them: the process environment first, then the env files that loader reads, in the folder the command
-// runs in, or one env file named instead. Next.js and Vite load .env.local over .env; Node's
-// loadEnvFile(), python-dotenv and godotenv read .env only (owner, 2026-11-12). The key, the
+// runs in, or one env file named instead. Next.js loads .env.local over .env; Node's loadEnvFile(),
+// python-dotenv and godotenv read .env only, and Vite puts neither in process.env. The key, the
 // environment and the base URL are each found this way, so doctor checks what the application will call.
 import { resolve } from "node:path";
 import { parseEnv } from "node:util";
 import { printablePath, readsEnvLocal, shownPath } from "./envfile.js";
 import { readSmallText } from "./files.js";
 
-/** The env files read after the environment, in the order Next.js and Vite load them: .env.local over .env. */
+/** The env files read after the environment, in the order Next.js loads them: .env.local over .env. */
 export const ENV_FILES = [".env.local", ".env"] as const;
 
 export const KEY_VARIABLE = "HAAU3_API_KEY";
@@ -18,7 +18,7 @@ export const BASE_URL_VARIABLE = "HAAU3_BASE_URL";
 /** An env file bigger than this is not one, and is not read. */
 const MAX_FILE_BYTES = 1024 * 1024;
 
-/** The env files a project's own loader reads: both for Next.js or Vite, else .env alone. */
+/** The env files a project's own loader reads: both for Next.js, else .env alone. */
 export function loadedFiles(cwd: string): readonly string[] {
   return readsEnvLocal(resolve(cwd)) ? ENV_FILES : [".env"];
 }
@@ -29,7 +29,7 @@ export interface EnvFile {
   path: string;
   /** As it is printed: relative to the current folder when inside it. */
   shown: string;
-  /** Whether the project's loader reads it: a .env.local outside Next.js and Vite is read only to warn. */
+  /** Whether the project's loader reads it: a .env.local outside Next.js is read only to warn. */
   loaded: boolean;
   /** Its variables, or null when it could not be read. */
   variables: NodeJS.Dict<string> | null;
