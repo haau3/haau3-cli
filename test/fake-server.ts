@@ -105,7 +105,8 @@ export const REVOKED_KEY_ID = "5f2a1b4c-5d6e-4f70-8a9b-0c1d2e3f4a5d";
 export const UNKNOWN_KEY_ID = "6f2a1b4c-5d6e-4f70-8a9b-0c1d2e3f4a5e";
 /** The listed active key's prefix, and a key that has it, for a project that uses that key. */
 export const LISTED_PREFIX = ["haau3", "sk", "live", "Lst123"].join("_");
-export function listedKey(rest = "ListedKeyRestOfItsFortyThreeCharactersX"): string {
+/** A whole key with the listed prefix: its six shown characters, then 37 more, 43 in all. */
+export function listedKey(rest = "ListedKeyRestOfFortyThreeCharactersXY"): string {
   return `${LISTED_PREFIX}${rest}`;
 }
 export const LISTED_NAME = "laptop";
@@ -135,7 +136,9 @@ export type RevokeKeyAnswer =
   | "no-answer"
   | "garbled"
   | "refused"
-  | "off";
+  | "off"
+  /** A refusal with a code the command line does not know, after the sign-in ended: it says so. */
+  | "other-code-ended";
 
 /** What the API's metadata answers, for doctor: `echo` repeats what it was sent, as a broken server might. */
 export type ApiAnswer = "ok" | "unauthorized" | "rate-limited" | "unavailable" | "echo";
@@ -267,6 +270,7 @@ export class FakeServer {
       if (answer === "no-answer") return void res.destroy();
       if (answer === "unavailable") return problem(503, "unavailable", { "Retry-After": "30" });
       if (answer === "gone") return problem(404, "key-not-found", {}, { signInEnded: true });
+      if (answer === "other-code-ended") return problem(409, "something-new", {}, { signInEnded: true });
       const revokedAt = "2026-11-12T15:00:00.000Z";
       key.revokedAt = revokedAt;
       if (answer === "raced") return problem(409, "already-revoked", {}, { revokedAt, signInEnded: true });

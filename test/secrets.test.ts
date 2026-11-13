@@ -441,6 +441,92 @@ describe("listing and revoking keys never prints a key", () => {
   }
 });
 
+/**
+ * A broken or hostile platform's key list: the access token and planted keys where only facts about a
+ * key belong, each in its own variant, so one refused field cannot hide another.
+ */
+function hostileLists(): [string, Record<string, unknown>[]][] {
+  const zw = "​";
+  const variants: [string, Partial<Record<string, unknown>>][] = [
+    ["a key split by zero-width spaces as a name", { name: IN_ENV.replaceAll("_", `_${zw}`) }],
+    ["the access token as a name", { name: `prod ${ACCESS_TOKEN}` }],
+    ["the access token in a date", { createdAt: `1 (${ACCESS_TOKEN})` }],
+    ["a key in a date", { lastUsedAt: `1 (${IN_ENV})` }],
+    ["a key as the id", { id: IN_ENV }],
+    ["a key as the prefix", { keyPrefix: IN_ENV }],
+    ["a key in the revoked time", { revokedAt: `1 (${IN_ENV_LOCAL})` }],
+  ];
+  return variants.map(([label, change]) => {
+    const listed = listedKeys();
+    Object.assign(listed[0]!, change);
+    return [label, listed];
+  });
+}
+
+describe("a hostile platform's key list, key or refusal never makes a command print a secret", () => {
+  for (const [label, listed] of hostileLists()) {
+    it(`when it sends ${label}`, async () => {
+      for (const person of [false, true]) {
+        for (const output of ["", "json", "text"]) {
+          Object.assign(server, { listed: structuredClone(listed), tokenAnswers: ["approved"], whoamiAnswer: "ok", revokeStatus: 200, revokeKeyAnswer: "revoked", listAnswer: "ok", readAnswer: "ok" });
+          const store = testStore(dir, memoryKeyring());
+          const env = { HAAU3_API_KEY: IN_ENVIRONMENT, HAAU3_OUTPUT: output, HAAU3_PLATFORM_URL: server.url };
+          const shown: string[] = [];
+          const confirm = async (question: string, prompt: string) => (shown.push(question, prompt), true);
+          const io = { store, ...fakeClock(), ...(person ? { stdin: { isTTY: true }, openBrowser: async () => true, enter: () => ({ pressed: Promise.resolve(), stop() {} }), confirm } : {}) };
+          const run = async (args: string[]) => {
+            const out = await runCli(args, { tty: person, env, cwd: project, io });
+            assertClean(out.stdout, `stdout of keys ${args[1]}`);
+            assertClean(out.stderr, `stderr of keys ${args[1]}`);
+          };
+          await run(["login"]);
+          await run(["login", "--complete"]);
+          await run(["keys", "list"]);
+          await run(["keys", "list", "--all"]);
+          await run(["keys", "revoke", LISTED_KEY_ID]);
+          await run(["keys", "revoke", REVOKED_KEY_ID]);
+          await store.clear(server.url);
+          for (const text of shown) assertClean(text, "the question");
+        }
+      }
+    });
+  }
+
+  it("when every list and read answer is tried, and a refusal holds the token and a key in each member", async () => {
+    const answers = ["ok", "unauthorized", "not-a-member", "unavailable", "garbled", "off", "refused"] as const;
+    for (const listAnswer of answers) {
+      for (const readAnswer of answers) {
+        Object.assign(server, { listed: listedKeys(), tokenAnswers: ["approved"], whoamiAnswer: "ok", revokeKeyAnswer: "other-code-ended", listAnswer, readAnswer, platformRequestId: ACCESS_TOKEN });
+        const store = testStore(dir, memoryKeyring());
+        const env = { HAAU3_API_KEY: IN_ENVIRONMENT, HAAU3_PLATFORM_URL: server.url };
+        const io = { store, ...fakeClock(), stdin: { isTTY: true }, confirm: async () => true };
+        for (const args of [["login"], ["login", "--complete"], ["keys", "list"], ["keys", "revoke", LISTED_KEY_ID]]) {
+          const out = await runCli(args, { tty: true, env, cwd: project, io });
+          assertClean(out.stdout + out.stderr, `keys with list ${listAnswer} and read ${readAnswer}`);
+        }
+        await store.clear(server.url);
+      }
+    }
+  });
+
+  it("as a real process, the session in a file, a key's name holding the access token", async () => {
+    server.interval = 1;
+    const listed = listedKeys();
+    listed[0]!.name = `prod ${ACCESS_TOKEN}`;
+    server.listed = listed;
+    const env = { HAAU3_API_KEY: IN_ENVIRONMENT, HAAU3_PLATFORM_URL: server.url, HAAU3_SESSION_STORE: "file", HAAU3_CONFIG_DIR: dir };
+    for (const args of [["login"], ["login", "--complete"], ["keys", "list"], ["keys", "list", "--all"], ["keys", "revoke", LISTED_KEY_ID], ["keys", "revoke", IN_ENVIRONMENT]]) {
+      const out = await spawnCliAsync(args, { cwd: project, env });
+      expect(out.stdout.startsWith("{"), args.join(" ")).toBe(true);
+      assertClean(out.stdout, `stdout of ${args.join(" ")}`);
+      assertClean(out.stderr, `stderr of ${args.join(" ")}`);
+    }
+    // As a real process stdin is not a terminal, so the revoke was refused and nothing was revoked.
+    expect(server.requests.filter((r) => /\/keys\/[^/]+\/revoke$/.test(r.path))).toEqual([]);
+    await spawnCliAsync(["logout"], { cwd: project, env });
+  });
+});
+
 /** Planted under other names, where doctor looks for a near-miss: their values and names are never printed. */
 const NEAR_VALUE = ["haau3", "sk", "test", `${CORE}near`].join("_");
 const NEAR_NAME = ["haau3", "sk", "live", `${CORE}name`].join("_");
