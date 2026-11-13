@@ -201,6 +201,16 @@ describe("the package manager", () => {
     expect(missing.document.error).toMatchObject({ code: "not-set-up", next: [{ command: "pipenv install haau3" }] });
     expect(checksOf(missing.document).sdk.message).toBe("Pipenv was not found on PATH, so haau3 was not installed.");
 
+    // On PATH only inside a node_modules folder, as a CI's pnpm setup puts pnpm: said so, and not run.
+    const modules = join(dirname(managers.bin), "node_modules", ".bin");
+    mkdirSync(modules, { recursive: true });
+    writeFileSync(join(modules, process.platform === "win32" ? "pipenv.cmd" : "pipenv"), "");
+    const skipped = await init(["--no-agent"], { path: pathOf(modules) });
+    expect(checksOf(skipped.document).sdk.message).toBe(
+      "Pipenv is on PATH only inside this project, a node_modules folder or Yarn's own folder, where haau3 never runs a program from, so haau3 was not installed.",
+    );
+    expect(managers.calls()).toEqual([]);
+
     const failing = await init(["--no-agent"], { env: { STANDIN_MODE: "fail" } });
     expect(failing.code).toBe(1);
     expect(checksOf(failing.document).sdk).toMatchObject({ status: "fail", message: "pipenv install haau3 failed (exit code 3), so haau3 may not be installed." });

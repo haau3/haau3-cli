@@ -93,8 +93,11 @@ const fresh = mkdtempSync(join(tmpdir(), "check-bin-init-"));
 try {
   writeFileSync(join(fresh, "package.json"), JSON.stringify({ name: "check-bin-init", version: "1.0.0", private: true }));
   const cli = join(work, "project", "node_modules", "haau3", "dist", "cli.mjs");
+  // As a person runs it with npx: none of the variables `pnpm check:bin` gives this script, which
+  // would name pnpm as the tool that ran init.
+  const asPerson = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^npm_/i.test(name)));
   const init = () => {
-    const ran = spawnSync(process.execPath, [cli, "init", "--no-agent", "--json"], { cwd: fresh, encoding: "utf8", env: { ...process.env, HAAU3_OUTPUT: "" }, timeout: 300_000 });
+    const ran = spawnSync(process.execPath, [cli, "init", "--no-agent", "--json"], { cwd: fresh, encoding: "utf8", env: { ...asPerson, HAAU3_OUTPUT: "" }, timeout: 300_000 });
     return { status: ran.status, document: parse(ran.stdout) };
   };
   const first = init();
