@@ -167,6 +167,20 @@ describe("the package manager", () => {
     expect(read("requirements.txt")).toBe("requests\n");
   });
 
+  it("names uv and Poetry for a pyproject.toml that names no tool, as uv init makes one", async () => {
+    write("pyproject.toml", '[project]\nname = "app"\nrequires-python = ">=3.10"\ndependencies = []\n');
+    const out = await init(["--no-agent"]);
+    expect(managers.calls()).toEqual([]);
+    expect(checksOf(out.document).sdk.next.map((s) => s.command)).toEqual([
+      'pip install "haau3>=0.4.0"',
+      "npx haau3 init --package-manager uv --no-agent",
+      "npx haau3 init --package-manager poetry --no-agent",
+    ]);
+    const named = await init(["--no-agent", "--package-manager", "uv"]);
+    expect(named.code).toBe(0);
+    expect(managers.calls()).toEqual([{ name: "uv", args: ["add", "haau3"], cwd: expect.any(String) }]);
+  });
+
   it("leaves an SDK older than its floor alone, and names the upgrade", async () => {
     write("package.json", JSON.stringify({ dependencies: { "@haau3/sdk": "^0.3.9" } }));
     write("pnpm-lock.yaml", "");
@@ -226,7 +240,7 @@ describe("choices it cannot make", () => {
     const out = await init(["--no-agent"]);
     expect(out.code).toBe(1);
     expect(out.document.error.code).toBe("no-project");
-    expect(out.document.error.next.map((s: { command: string }) => s.command)).toEqual(["npm init -y", "uv init --bare", "go mod init example.com/app"]);
+    expect(out.document.error.next.map((s: { command: string }) => s.command)).toEqual(["npm init -y", "uv init --bare --python 3.10", "go mod init example.com/app"]);
     expect(filesIn(project).size).toBe(0);
   });
 
@@ -242,7 +256,7 @@ describe("choices it cannot make", () => {
     expect(chosen.code).toBe(0);
     expect(managers.calls()[0]).toMatchObject({ name: "go" });
     const wrong = await init(["--no-agent", "--language", "python"]);
-    expect(wrong.document.error).toMatchObject({ code: "no-project", next: [{ command: "uv init --bare" }] });
+    expect(wrong.document.error).toMatchObject({ code: "no-project", next: [{ command: "uv init --bare --python 3.10" }] });
   });
 
   it("finds no agent, then refuses before changing anything, naming --agent and --no-agent", async () => {
