@@ -9,7 +9,7 @@
   "pull-request-header": "The next release of haau3, the command line, from the pull requests merged since the last one. Merging this makes the GitHub Release and stages the version on npm, where it goes live once approved.",
   "packages": {
     ".": {
-      "extra-files": ["src/version.ts"]
+      "extra-files": ["src/version.ts", "README.md"]
     }
   }
 }
