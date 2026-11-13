@@ -65,8 +65,21 @@ describe("release-please", () => {
   });
 
   it("updates src/version.ts, whose version line carries its annotation", () => {
-    expect(config.packages["."]["extra-files"]).toEqual(["src/version.ts"]);
+    expect(config.packages["."]["extra-files"]).toEqual(["src/version.ts", "README.md"]);
     expect(read("src/version.ts")).toMatch(/^export const VERSION = "\d+\.\d+\.\d+"; \/\/ x-release-please-version$/m);
+  });
+
+  // The README's example document names the version that prints it. Kept by hand, it went out a
+  // release behind once; release-please now sets it, between its markers, with every release.
+  it("updates the README's example document, whose block carries the markers and names this version", () => {
+    const readme = read("README.md");
+    const block = /<!-- x-release-please-start-version -->\n```json\n([\s\S]*?)```\n<!-- x-release-please-end -->/.exec(readme);
+    expect(block, "the marked block").not.toBeNull();
+    const document = block?.[1] ?? "";
+    expect(document).toContain(`"cliVersion": "${pkg.version}"`);
+    // Inside the block release-please replaces every x.y.z, so nothing else in it may look like one.
+    expect(document.match(/\d+\.\d+\.\d+/g)).toEqual([pkg.version]);
+    expect(readme.match(/x-release-please-start-version/g)).toHaveLength(1);
   });
 
   it("forces 0.1.0 for the first version only: release-as goes once the placeholder's 0.0.0 is behind", () => {

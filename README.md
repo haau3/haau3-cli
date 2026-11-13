@@ -250,11 +250,12 @@ of its own.
 
 The document:
 
+<!-- x-release-please-start-version -->
 ```json
 {
   "formatVersion": "1.3",
   "cli": "haau3",
-  "cliVersion": "0.1.9",
+  "cliVersion": "0.1.10",
   "command": null,
   "ok": false,
   "environment": null,
@@ -266,6 +267,7 @@ The document:
   }
 }
 ```
+<!-- x-release-please-end -->
 
 - `formatVersion` is the version of this shape. A new minor version only adds fields, so ignore a
   field you don't know. A new major version changes or removes one, so refuse a major version you
