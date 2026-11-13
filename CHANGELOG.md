@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.9](https://github.com/haau3/haau3-cli/compare/v0.1.8...v0.1.9) (2026-11-13)
+
+
+### Features
+
+* haau3 init ([#20](https://github.com/haau3/haau3-cli/issues/20)) ([2c0f957](https://github.com/haau3/haau3-cli/commit/2c0f957557a7071a4a62ad92d524520e533ed7a1))
+
 ## [0.1.8](https://github.com/haau3/haau3-cli/compare/v0.1.7...v0.1.8) (2026-11-12)
 
 
