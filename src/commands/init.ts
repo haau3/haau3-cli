@@ -19,7 +19,7 @@ import { gitAnswer, sameFolder } from "../git.js";
 import { EXIT, failure, success, type CliError, type NextStep } from "../output.js";
 import { ADD, ALL_MANAGERS, detectManager, MANAGERS, managerFor, MANIFEST_FILES, UPGRADE, upward, type Manager, type ManagerFound } from "../packages.js";
 import { readProject, SDK_FLOORS, type Language, type Project } from "../project.js";
-import { findProgram, runProgram } from "../run.js";
+import { findProgram, runProgram, skippedProgram } from "../run.js";
 import { findSettings, KEY_VARIABLE, type Settings } from "../settings.js";
 import { arg, doctorStep, fileFlag, KEYS_CREATE_STEP, keysCreateStep, LOGIN_STEP, misused, type Context, type Result } from "./context.js";
 import { gitignoreLine } from "./keys.js";
@@ -208,8 +208,13 @@ async function sdkStep(
   const commandLine = [manager, ...args].join(" ");
   const program = findProgram(manager, ctx.env, folder, platform, [".exe", ".cmd"]);
   if (!program) {
+    // On PATH only where haau3 never runs a program from: say so, rather than that it is missing.
+    const skipped = skippedProgram(manager, ctx.env, folder, platform, [".exe", ".cmd"]);
+    const why = skipped
+      ? `${MANAGER_NAME[manager]} is on PATH only inside this project, a node_modules folder or Yarn's own folder, where haau3 never runs a program from, so ${name} was not installed.`
+      : `${MANAGER_NAME[manager]} was not found on PATH, so ${name} was not installed.`;
     return {
-      check: check("sdk", "fail", `${MANAGER_NAME[manager]} was not found on PATH, so ${name} was not installed.`, [{ command: commandLine, description: `Install ${MANAGER_NAME[manager]}, then run this in the project's folder.` }], {
+      check: check("sdk", "fail", why, [{ command: commandLine, description: skipped ? "Run this yourself in the project's folder." : `Install ${MANAGER_NAME[manager]}, then run this in the project's folder.` }], {
         package: name,
         installedBy: null,
       }),

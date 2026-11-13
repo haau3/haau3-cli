@@ -81,6 +81,33 @@ export function findProgram(
   return null;
 }
 
+/**
+ * Where a program findProgram would not run is on PATH: inside the project, a node_modules folder or
+ * Yarn's folder, as a CI's pnpm setup puts pnpm in one. Null when there is none, so "not found" is true.
+ */
+export function skippedProgram(
+  name: string,
+  env: NodeJS.ProcessEnv,
+  cwd: string,
+  platform: NodeJS.Platform = process.platform,
+  windows: readonly (".exe" | ".cmd")[] = [".exe"],
+): string | null {
+  const separator = platform === "win32" ? ";" : ":";
+  const names = platform === "win32" ? windows.map((extension) => `${name}${extension}`) : [name];
+  for (const raw of pathOf(env, platform).split(separator)) {
+    const entry = raw.trim().replace(/^"(.*)"$/, "$1");
+    if (!entry || !isAbsolute(entry)) continue;
+    for (const file of names) {
+      try {
+        if (statSync(join(entry, file)).isFile()) return entry;
+      } catch {
+        // Not here.
+      }
+    }
+  }
+  return null;
+}
+
 /** An argument haau3 passes: one of its own constants, with nothing a shell or cmd.exe reads. */
 const PLAIN_ARGUMENT = /^[A-Za-z0-9@/._:=-]+$/;
 
