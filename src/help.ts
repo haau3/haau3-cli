@@ -58,7 +58,7 @@ export const HELP: Help = {
     { name: "keys list --all", description: "Revoked keys too." },
     {
       name: "keys revoke <id>",
-      description: "Revoke a key, for a person at a terminal, who types its name to confirm. Refused with no terminal or when a coding agent runs it. Revoking ends the sign-in.",
+      description: "Revoke a key: a person at a terminal types its name to confirm. Refused with no terminal, JSON, CI or a coding agent. Revoking ends the sign-in.",
     },
   ],
   options: [

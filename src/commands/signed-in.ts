@@ -1,6 +1,6 @@
 // What a command that acts through the session needs before it asks the platform anything, and what
 // it does when the platform no longer takes the session: shared by `keys list` and `keys revoke`.
-import { findKey } from "../key.js";
+import { findKey, wellFormed } from "../key.js";
 import type { CliError } from "../output.js";
 import type { Session } from "../session/record.js";
 import type { ListedKey, SessionAnswer } from "../signin/keys.js";
@@ -51,12 +51,12 @@ const PREFIX = /^haau3_sk_(?:live_|test_)?[A-Za-z0-9_-]{6}$/;
 
 /**
  * The key this project uses, found where the application finds it (the environment, then its env
- * files), told by the part of it the keys page shows. Null when there is none, or it is not a haau3
- * key: nothing of a value that is not one is ever repeated.
+ * files), told by the part of it the keys page shows. Null when there is none, or it is not a whole,
+ * well-formed haau3 key: nothing of any other value is ever repeated, a short or mistyped one included.
  */
 export function projectKeyOf(ctx: Context): ProjectKey | null {
   const found = findKey({ cwd: ctx.cwd, env: ctx.env });
-  if (found.report.status !== "found" || !found.key) return null;
+  if (found.report.status !== "found" || !found.key || !wellFormed(found.key.reveal())) return null;
   const { mode, source } = found.report;
   if (mode === "unrecognized") return null;
   const head = mode === "live" ? "haau3_sk_live_" : mode === "test" ? "haau3_sk_test_" : "haau3_sk_";

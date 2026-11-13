@@ -1,15 +1,18 @@
-// `haau3 keys revoke <id>`: revokes one of the signed-in organization's keys, for a person at a
-// terminal only. A revoked key cannot be brought back and anything using it stops at once, so the
-// command shows the key and asks the person to type its name. No flag skips that, and with no terminal,
-// or when a coding agent runs it, it refuses and says what it would have revoked: an agent hands the
-// command to its person, or points to the keys page.
+// `haau3 keys revoke <id>`: revokes one of the signed-in organization's keys, asking a person at a
+// terminal first. A revoked key cannot be brought back and anything using it stops at once, so the
+// command shows the key and asks the person to type its name. No flag skips that. With no terminal,
+// with JSON, in CI, or when a coding agent runs it, it refuses and says what it would have revoked: an
+// agent hands the command to its person, or points to the keys page.
+//
+// What it checks is what it can see. A program that pretends to be a person at a terminal can answer
+// the question; what bounds any caller is the platform, which lets one sign-in change one key and ends
+// it doing so.
 //
 // Everything that needs no one else comes first: the id's shape, the session, then a read of the key
 // (which changes nothing). A managed key or a key revoked already is answered there. Only after the
-// person confirms is the platform asked to revoke, and revoking ends the sign-in, as making a key does:
-// one approval changes one key. This computer's session is ended too once the platform may have ended
-// it, whatever it answered.
-import { resolvePlatform } from "../environment.js";
+// person confirms is the platform asked to revoke. This computer's session is ended too once the
+// platform may have ended it, whatever it answered.
+import { resolvePlatform, type Environment } from "../environment.js";
 import { environmentOf } from "../key.js";
 import type { CliError, NextStep } from "../output.js";
 import { isKeyId, readKey, revokeKey, type ListedKey } from "../signin/keys.js";
@@ -27,6 +30,12 @@ export interface KeysRevokeOptions {
 /** The environment a key reaches: a key made before modes reaches production, as the API takes it. */
 function environmentOfKey(key: ListedKey) {
   return environmentOf(key.mode === "both" ? "older" : key.mode);
+}
+
+/** A CI run, as CI services mark one: no person is there to ask, terminal or not. */
+export function inCI(env: NodeJS.ProcessEnv): boolean {
+  const value = env.CI?.trim().toLowerCase();
+  return value !== undefined && value !== "" && value !== "false" && value !== "0";
 }
 
 function idRefusal(id: string | undefined): CliError | null {
@@ -56,9 +65,31 @@ export async function keysRevoke(ctx: Context, options: KeysRevokeOptions): Prom
   const refusal = idRefusal(options.id);
   if (refusal) return misused(COMMAND, refusal);
   const id = options.id!.toLowerCase();
+  const command = `npx haau3 keys revoke ${id}`;
+
+  // Only a person at a terminal is asked. Anyone else is told what would have been revoked, and how a
+  // person does it, and is never sent to sign in first for a command that would refuse it anyway.
+  const canAsk = ctx.interactive && ctx.confirm !== undefined && !inCI(ctx.env);
+  const notAsked = (facts: string | null, environment: Environment | null): Result =>
+    misused(
+      COMMAND,
+      {
+        code: "confirmation-needed",
+        message: [
+          "haau3 revokes a key only when a person at a terminal types its name to confirm, since a revoked key cannot be brought back and anything using it stops at once. Nothing was revoked.",
+          facts ? `It would revoke this key:\n${facts}` : null,
+          `Have the person who owns this project run this in their own terminal, not through a coding agent or CI:\n  ${command}\nor revoke the key on the keys page at ${keysPage}.`,
+        ]
+          .filter(Boolean)
+          .join("\n"),
+        // Nothing to run here: running the same command again is refused again.
+        next: [],
+      },
+      environment,
+    );
 
   const signed = await signedIn(ctx, address);
-  if (!signed.ok) return failed(COMMAND, signed.error);
+  if (!signed.ok) return canAsk ? failed(COMMAND, signed.error) : notAsked(null, null);
   const session = signed.session;
   const organization = session.organization;
 
@@ -86,30 +117,26 @@ export async function keysRevoke(ctx: Context, options: KeysRevokeOptions): Prom
     return done(COMMAND, data, `Already revoked on ${day(key.revokedAt)}, so nothing changed:\n${facts}\n`, environment);
   }
 
-  // Only a person at a terminal is asked; anyone else is told what would have been revoked.
-  if (!ctx.interactive || !ctx.confirm) {
-    return misused(
-      COMMAND,
-      {
-        code: "confirmation-needed",
-        message: `haau3 revokes a key only for a person at a terminal, who types its name to confirm: a revoked key cannot be brought back, and anything using it stops at once. Nothing was revoked. It would revoke this key:\n${facts}\nRun the command below yourself, in a terminal and not through a coding agent, or revoke the key on the keys page at ${keysPage}.`,
-        next: [{ command: `npx haau3 keys revoke ${id}`, description: "Run this yourself in a terminal: it shows the key and asks you to type its name." }],
-      },
-      environment,
-    );
-  }
+  if (!canAsk) return notAsked(facts, environment);
 
+  // The name, exactly as shown, when a person can type it; otherwise the end of the prefix.
   const expected = key.nameAsIs ? key.name : key.prefix.slice(-6);
-  const typed = key.nameAsIs ? "the key's name" : `${expected}, the end of its prefix (its name holds characters haau3 does not print as they are)`;
+  const typed = key.nameAsIs
+    ? `the key's name, ${expected},`
+    : `${expected}, the end of its prefix (its name cannot be typed as it is shown),`;
   const question = [
     `This revokes a key of ${organization.name}:`,
     facts,
     "Anything using it stops working at once, and a revoked key cannot be brought back.",
     "Revoking ends this sign-in, so the next key command signs in again.",
   ].join("\n");
-  const confirmed = await ctx.confirm(question, `Type ${typed} to revoke it: `, expected);
+  const confirmed = await ctx.confirm!(question, `Type ${typed} to revoke it: `, expected);
   if (!confirmed) {
-    return failed(COMMAND, { code: "not-confirmed", message: "Nothing was revoked: the key's name was not typed.", next: [] }, environment);
+    return failed(
+      COMMAND,
+      { code: "not-confirmed", message: `Nothing was revoked: what was asked for was not typed. Run it again, or revoke the key on the keys page at ${keysPage}.`, next: [] },
+      environment,
+    );
   }
 
   const revoked = await revokeKey(address, session.accessToken, id);
@@ -122,8 +149,8 @@ export async function keysRevoke(ctx: Context, options: KeysRevokeOptions): Prom
       if (inUse === "environment") {
         lines.push("This shell's HAAU3_API_KEY still holds the revoked key: unset it, and set a working key where the application reads it.");
       } else if (inUse) {
-        lines.push(`${inUse} still holds the revoked key, as HAAU3_API_KEY. Put a new key in its place:`);
-        next.push(keysCreateStep({ replace: true }, `Make a new key and put it in place of the revoked one in ${inUse}.`));
+        lines.push(`${inUse} still holds the revoked key, as HAAU3_API_KEY. Put a new key of the same mode in its place:`);
+        next.push(keysCreateStep({ replace: true, test: key.mode === "test" }, `Make a new ${key.mode === "test" ? "test" : "live"} key and put it in place of the revoked one in ${inUse}.`));
       }
       const data = { status: "revoked", key: keyData(revoked.key, inUse), organization, signInEnded: true, next };
       return done(COMMAND, data, `${lines.join("\n")}\n${nextText(next)}`, environment);
@@ -143,7 +170,16 @@ export async function keysRevoke(ctx: Context, options: KeysRevokeOptions): Prom
       return failed(COMMAND, { code: "key-not-found", message: `${organization.name} no longer has that key.${ended}`, next, problem: revoked.problem }, environment);
     }
     case "managed":
-      return failed(COMMAND, { code: "managed-key", message: "That is one of the playground keys the dashboard keeps, which cannot be revoked.", next: [], problem: revoked.problem }, environment);
+    case "error": {
+      // Nothing was revoked. The sign-in is ended here too when the platform says it ended it.
+      if (revoked.signInEnded) await endHere();
+      const error: CliError =
+        revoked.kind === "managed"
+          ? { code: "managed-key", message: "That is one of the playground keys the dashboard keeps, which cannot be revoked.", next: [], problem: revoked.problem }
+          : revoked.error;
+      const ended = revoked.signInEnded ? { message: `${error.message} The platform ended the sign-in, so sign in again first.`, next: [LOGIN_STEP, ...error.next] } : {};
+      return failed(COMMAND, { ...error, ...ended }, environment);
+    }
     case "ended":
     case "no-organization":
       return failed(COMMAND, await sessionRefused(ctx, address, session, revoked), environment);
@@ -155,7 +191,5 @@ export async function keysRevoke(ctx: Context, options: KeysRevokeOptions): Prom
         { ...revoked.error, message: `${revoked.error.message} Asking may have ended the sign-in, so it is ended here too: sign in again before trying again.`, next: [...revoked.error.next, LOGIN_STEP] },
         environment,
       );
-    case "error":
-      return failed(COMMAND, revoked.error, environment);
   }
 }

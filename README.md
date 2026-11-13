@@ -185,14 +185,20 @@ npx haau3 keys revoke <id>
 
 Revokes one of the organization's keys, by the id `keys list` shows. A revoked key cannot be
 brought back, and anything using it stops at once. So `keys revoke` shows the key, says whether this
-project uses it, and asks you to type its name. **It runs only for a person at a terminal.** With no
-terminal, or when a coding agent runs it, it revokes nothing and exits 2 with
-`confirmation-needed`. It names the key it would have revoked and the command to run yourself, and
-it points to the keys page. No flag skips the question.
+project uses it, and asks you to type its name exactly as shown. A name that cannot be typed as it is
+shown asks for the end of the key's prefix instead. Anything typed before the question appears is
+ignored, and after two minutes with no answer it gives up. No flag skips the question.
 
-**Revoking ends the sign-in**, as making a key does, so each change to a key takes its own approval.
-A playground key the dashboard keeps cannot be revoked. A key revoked already exits 0 and changes
-nothing. To rotate a key, run `keys create --replace`, sign in again, then revoke the old key.
+**It asks a person at a terminal, and refuses when it can tell no person is there**: no terminal,
+JSON output, the `CI` variable, or a coding agent's variables. Then it revokes nothing and exits 2
+with `confirmation-needed`. It names the key it would have revoked, gives the command for the person
+to run in their own terminal, and points to the keys page.
+
+A program that pretends to be a person at a terminal can still answer the question. What bounds any
+caller is the platform: **revoking ends the sign-in**, as making a key does, and one sign-in changes
+one key. A playground key the dashboard keeps cannot be revoked. A key revoked already exits 0 and
+changes nothing. To rotate a key, run `keys create --replace`, sign in again, then revoke the old
+key.
 
 ### Switching organization
 
@@ -217,7 +223,8 @@ npx haau3 login
 - It sends a key only to `api.haau3.com`, `sandbox.haau3.com` or this computer. It reads the skill
   from `docs.haau3.com`, and sends it no key and no session.
 - A session can do only what its member can do on the dashboard.
-- It never revokes a key without a person at a terminal typing the key's name.
+- It never revokes a key without asking at a terminal for the key's name, and never asks where it can
+  tell no person is there.
 
 ## For coding agents
 
@@ -226,8 +233,8 @@ When a coding agent runs it, every command prints one JSON document, never a pro
 `login`, give the person the page and the code it prints, then run `login --complete` and
 `keys create`. The key goes into the env file, never through the chat. `npx haau3 init` adds the
 haau3 skill and the docs' MCP server for the project's coding agents. An agent can list keys with
-`keys list`, but not revoke one: `keys revoke` refuses it, and its error names the key and the
-command the person runs in their own terminal.
+`keys list`, but `keys revoke` refuses it. Its error names the key and the command for the person
+to run in their own terminal, with nothing in `next`, since running it again is refused again.
 
 ## Output
 

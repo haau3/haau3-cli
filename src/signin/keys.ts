@@ -5,7 +5,7 @@
 import { ApiKey } from "../key.js";
 import type { CliError, NextStep, Problem } from "../output.js";
 import { CLI_API_PATH, platformUnavailable, signInUnavailable } from "./discovery.js";
-import { call, displayText, holdsSecret, isRecord, problemOf, text } from "./http.js";
+import { call, displayText, holdsSecret, isRecord, mayHoldSecret, problemOf, text } from "./http.js";
 import type { AccessToken } from "./secret.js";
 
 export type KeyMode = "live" | "test";
@@ -175,15 +175,18 @@ export function isKeyId(value: string): boolean {
 /** The part of a listed key the keys page shows: its mode's prefix (none for a key made before modes) and six characters. */
 const LISTED_PREFIX = /^haau3_sk_(?:live_|test_)?[A-Za-z0-9_-]{6}$/;
 
-/** Shown in place of a name that holds a key's marker. */
-export const HIDDEN_NAME = "[a name holding an API key, not shown]";
+/** Shown in place of a name that could hold a secret (mayHoldSecret). */
+export const HIDDEN_NAME = "[a name that may hold a secret, not shown]";
 
 /** One of the organization's keys, as the keys page lists it. Never a secret. */
 export interface ListedKey {
   id: string;
   /** The key's name, any character a terminal could act on replaced, or HIDDEN_NAME. */
   name: string;
-  /** Whether `name` is exactly the name the key has, so a person can type it to confirm. */
+  /**
+   * Whether a person can type `name` exactly as it is shown, so it can confirm a revoke: shown as it
+   * is, and made only of visible letters, digits, punctuation, symbols and single spaces.
+   */
   nameAsIs: boolean;
   prefix: string;
   /** `both` for a key made before modes, which works in production and the Sandbox. */
@@ -196,17 +199,36 @@ export interface ListedKey {
   createdVia: "dashboard" | "cli";
 }
 
-function time(value: unknown): string | undefined {
+/**
+ * A time exactly as the platform writes one, ISO 8601 with its offset (2026-11-12T15:00:00.000Z), and
+ * nothing else: Date.parse alone takes free text such as "1 (anything)".
+ */
+const ISO_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/;
+
+export function time(value: unknown): string | undefined {
   const at = text(value, 40);
-  return at && !Number.isNaN(Date.parse(at)) ? at : undefined;
+  return at && ISO_TIME.test(at) && !Number.isNaN(Date.parse(at)) ? at : undefined;
 }
 
 function nullableTime(value: unknown): string | null | undefined {
   return value === null ? null : time(value);
 }
 
-/** A key the platform described, or undefined unless every field has exactly its shape. */
-export function parseListedKey(value: unknown): ListedKey | undefined {
+/** Letters, digits, punctuation, symbols and the plain space: what a keyboard types and a terminal shows. */
+const TYPEABLE = /^[\p{L}\p{N}\p{P}\p{S} ]+$/u;
+/** Letters that show as nothing: the Hangul fillers and the blank Braille pattern. */
+const BLANK_LETTERS = /[ᅟᅠㅤﾠ⠀]/;
+
+/** Whether a person can type a name exactly as it is shown. */
+export function typeable(name: string): boolean {
+  return name === name.trim() && !name.includes("  ") && TYPEABLE.test(name) && !BLANK_LETTERS.test(name);
+}
+
+/**
+ * A key the platform described, or undefined unless every field has exactly its shape. `bearer` is
+ * the token the request was sent with: a name holding any of it is never shown.
+ */
+export function parseListedKey(value: unknown, bearer?: string): ListedKey | undefined {
   if (!isRecord(value)) return undefined;
   const id = text(value.id, 64);
   const prefix = text(value.keyPrefix, 30);
@@ -223,11 +245,11 @@ export function parseListedKey(value: unknown): ListedKey | undefined {
   // A key's prefix names its mode, and the two must agree; a key made before modes names neither.
   const named = prefix.startsWith("haau3_sk_live_") ? "live" : prefix.startsWith("haau3_sk_test_") ? "test" : "both";
   if (named !== mode) return undefined;
-  const holds = /haau3_sk_/i.test(shown);
+  const hidden = mayHoldSecret(raw ?? "", bearer) || mayHoldSecret(shown, bearer);
   return {
     id,
-    name: holds ? HIDDEN_NAME : shown,
-    nameAsIs: !holds && shown === raw,
+    name: hidden ? HIDDEN_NAME : shown,
+    nameAsIs: !hidden && shown === raw && typeable(shown),
     prefix,
     mode,
     createdAt,
@@ -250,13 +272,13 @@ export interface KeyList {
 /** The most keys one answer may hold. */
 const PAGE_MAX = 100;
 
-export function parseKeyList(body: unknown): KeyList | undefined {
+export function parseKeyList(body: unknown, bearer?: string): KeyList | undefined {
   if (!isRecord(body) || !Array.isArray(body.keys) || body.keys.length > PAGE_MAX) return undefined;
   const { hasMore, revokedOmitted } = body;
   if (typeof hasMore !== "boolean" || !Number.isSafeInteger(revokedOmitted) || (revokedOmitted as number) < 0) return undefined;
   const keys: ListedKey[] = [];
   for (const entry of body.keys) {
-    const key = parseListedKey(entry);
+    const key = parseListedKey(entry, bearer);
     if (!key) return undefined;
     keys.push(key);
   }
@@ -291,7 +313,7 @@ export async function listKeys(platformURL: string, token: AccessToken, includeR
   const answer = await call(`${platformURL}${CLI_API_PATH}/keys${includeRevoked ? "?include=revoked" : ""}`, { bearer: token });
   if (!answer.answered) return { kind: "error", error: unreachable(host) };
   if (answer.status === 200) {
-    const list = parseKeyList(answer.body);
+    const list = parseKeyList(answer.body, token.reveal());
     if (list) return { kind: "ok", list };
     return { kind: "error", error: { code: "unexpected-answer", message: `${host} answered with a list of keys haau3 cannot read.`, next: [NEWER], problem: problemOf(answer) } };
   }
@@ -317,7 +339,7 @@ export async function readKey(platformURL: string, token: AccessToken, id: strin
   const answer = await call(`${platformURL}${CLI_API_PATH}/keys/${id}`, { bearer: token });
   if (!answer.answered) return { kind: "error", error: unreachable(host) };
   if (answer.status === 200) {
-    const key = parseListedKey(answer.body);
+    const key = parseListedKey(answer.body, token.reveal());
     if (key && key.id.toLowerCase() === id.toLowerCase()) return { kind: "ok", key };
     return { kind: "error", error: { code: "unexpected-answer", message: `${host} answered with a description of the key haau3 cannot read.`, next: [NEWER], problem: problemOf(answer) } };
   }
@@ -336,15 +358,15 @@ export type RevokeResult =
   | { kind: "already-revoked"; revokedAt: string | null; signInEnded: boolean; problem: Problem }
   | { kind: "not-found"; signInEnded: boolean; problem: Problem }
   /** One of the playground keys the dashboard keeps. */
-  | { kind: "managed"; problem: Problem }
+  | { kind: "managed"; signInEnded: boolean; problem: Problem }
   | SessionAnswer
   /**
    * The key may have been revoked: the platform failed, gave no answer, or answered with a success
    * haau3 cannot read. The sign-in may have ended before it did.
    */
   | { kind: "unknown"; error: CliError }
-  /** Refused before anything changed; the sign-in is kept. */
-  | { kind: "error"; error: CliError };
+  /** Refused, nothing revoked. The sign-in is kept unless the refusal says it ended (`signInEnded`). */
+  | { kind: "error"; signInEnded: boolean; error: CliError };
 
 /** How long the platform may take to revoke a key: it ends the sign-in first, which asks the sign-in service three times. */
 export const REVOKE_TIMEOUT_MS = 30_000;
@@ -362,7 +384,7 @@ export async function revokeKey(platformURL: string, token: AccessToken, id: str
     };
   }
   if (answer.status === 200) {
-    const key = parseListedKey(answer.body);
+    const key = parseListedKey(answer.body, token.reveal());
     if (key && key.id.toLowerCase() === id.toLowerCase() && key.revokedAt !== null) return { kind: "revoked", key };
   }
   if (answer.status >= 200 && answer.status < 300) {
@@ -382,14 +404,15 @@ export async function revokeKey(platformURL: string, token: AccessToken, id: str
   if (answer.status === 409 && problem.code === "already-revoked") {
     return { kind: "already-revoked", revokedAt: time(body.revokedAt) ?? null, signInEnded, problem };
   }
-  if (answer.status === 409 && problem.code === "managed-key") return { kind: "managed", problem };
+  if (answer.status === 409 && problem.code === "managed-key") return { kind: "managed", signInEnded, problem };
   if (answer.status === 404 && problem.code === "key-not-found") return { kind: "not-found", signInEnded, problem };
   const session = sessionAnswer(answer.status, problem);
   if (session) return session;
-  if (answer.status === 404) return { kind: "error", error: signInUnavailable(platformURL, answer) };
   if (answer.status >= 500) {
     const unavailable = platformUnavailable(host, answer);
     return { kind: "unknown", error: { ...unavailable, message: `${unavailable.message} The key may have been revoked anyway: look on the keys page at ${keysPage} before trying again.` } };
   }
-  return { kind: "error", error: { code: "unexpected-answer", message: `${host} refused to revoke the key (HTTP ${answer.status}).`, next: [NEWER], problem } };
+  // Any other refusal revoked nothing; whether it spent the sign-in, it says (`signInEnded`), whatever its code.
+  if (answer.status === 404) return { kind: "error", signInEnded, error: signInUnavailable(platformURL, answer) };
+  return { kind: "error", signInEnded, error: { code: "unexpected-answer", message: `${host} refused to revoke the key (HTTP ${answer.status}).`, next: [NEWER], problem } };
 }

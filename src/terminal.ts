@@ -52,24 +52,50 @@ export function sameText(answer: string, expected: string): boolean {
   return fold(answer) === fold(expected) && fold(expected) !== "";
 }
 
+/** How long input that came before the question is waited for, and dropped. */
+export const DRAIN_MS = 150;
+/** How long a person has to answer before the question gives up. */
+export const CONFIRM_TIMEOUT_MS = 120_000;
+
 /**
  * Asks a person at a terminal to type `expected` to confirm, at most three times: true when they do.
- * Ctrl-D, or the input ending, is no answer, and so is three answers that are not it.
+ * Ctrl-D, or the input ending, is no answer; so is three answers that are not it, and no answer within
+ * `timeoutMs`. Anything typed before the question shows is dropped, so a pasted command followed by
+ * the name cannot confirm a key nobody saw.
  */
-export function confirmOnTerminal(stdin: NodeJS.ReadStream, stdout: NodeJS.WriteStream) {
+export function confirmOnTerminal(stdin: NodeJS.ReadStream, stdout: NodeJS.WriteStream, { drainMs = DRAIN_MS, timeoutMs = CONFIRM_TIMEOUT_MS } = {}) {
   return async (question: string, prompt: string, expected: string): Promise<boolean> => {
     const rl = createInterface({ input: stdin, output: stdout, terminal: false });
-    const closed = new Promise<null>((resolve) => rl.once("close", () => resolve(null)));
+    let closedEarly = false;
+    const closed = new Promise<null>((resolve) =>
+      rl.once("close", () => {
+        closedEarly = true;
+        resolve(null);
+      }),
+    );
+    let timer: NodeJS.Timeout | undefined;
+    const timedOut = new Promise<null>((resolve) => {
+      timer = setTimeout(() => resolve(null), timeoutMs);
+    });
     try {
+      // Whatever was typed or pasted before now arrives first: read it, and drop it.
+      let dropped = 0;
+      const drop = () => dropped++;
+      rl.on("line", drop);
+      await new Promise((resolve) => setTimeout(resolve, drainMs));
+      rl.off("line", drop);
+      if (closedEarly) return false;
+      if (dropped > 0) stdout.write("What was typed before this question was ignored.\n");
       stdout.write(`${question}\n`);
       for (let tries = 0; tries < 3; tries++) {
-        const answer = await Promise.race([rl.question(prompt).catch(() => null), closed]);
+        const answer = await Promise.race([rl.question(prompt).catch(() => null), closed, timedOut]);
         if (answer === null) return false;
         if (sameText(answer, expected)) return true;
         if (tries < 2) stdout.write("That does not match.\n");
       }
       return false;
     } finally {
+      clearTimeout(timer);
       rl.close();
       stdin.pause();
     }

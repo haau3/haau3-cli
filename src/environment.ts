@@ -58,6 +58,10 @@ export function checkAddress(configured: string): AddressCheck {
 export function resolvePlatform(env: NodeJS.ProcessEnv): PlatformResult {
   const configured = env[PLATFORM_URL_VARIABLE]?.trim();
   if (!configured) return { ok: true, platformURL: DEFAULT_PLATFORM_URL };
+  // Its address is printed (the keys page's address, the host signing in), so it may hold no key.
+  if (/haau3_sk_/i.test(configured)) {
+    return { ok: false, error: invalidAddress(PLATFORM_URL_VARIABLE, "holds an API key", "invalid-platform-url", `Sign in at ${DEFAULT_PLATFORM_URL}, the address it has unless you are developing against another.`) };
+  }
   const checked = checkAddress(configured);
   if (!checked.ok) return { ok: false, error: invalidAddress(PLATFORM_URL_VARIABLE, checked.why, "invalid-platform-url", `Sign in at ${DEFAULT_PLATFORM_URL}, the address it has unless you are developing against another.`) };
   return { ok: true, platformURL: checked.address };
