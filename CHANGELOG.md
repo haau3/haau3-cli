@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.10](https://github.com/haau3/haau3-cli/compare/v0.1.9...v0.1.10) (2026-11-13)
+
+
+### Features
+
+* haau3 keys list and keys revoke ([#22](https://github.com/haau3/haau3-cli/issues/22)) ([0c7b98b](https://github.com/haau3/haau3-cli/commit/0c7b98b3b7319ddf52c29b5c53df917e44dcf8c6))
+
 ## [0.1.9](https://github.com/haau3/haau3-cli/compare/v0.1.8...v0.1.9) (2026-11-13)
 
 
