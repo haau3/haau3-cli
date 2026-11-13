@@ -30,7 +30,8 @@ const EMAIL_DOMAINS = /(^|\.)(haau3\.com|users\.noreply\.github\.com|anthropic\.
 export const RULES: Rule[] = [
   {
     name: "a repository of the haau3 organization other than this one and the SDKs",
-    pattern: /(?<![@\w.-])haau3\/[\w.-]+/g,
+    // Not a coding agent's skills folder named for the haau3 skill, such as .claude/skills/haau3/SKILL.md.
+    pattern: /(?<![@\w.-])(?<!skills\/)haau3\/[\w.-]+/g,
     // The SDKs are public too, and this repository names them.
     allow: (match) => /^haau3\/haau3-(cli|node|python|go)(?![\w-])/.test(match),
   },
