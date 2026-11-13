@@ -21,7 +21,14 @@ export interface Context {
   openBrowser?: (url: string) => Promise<boolean>;
   /** The fetch the API's client sends with. The global one by default; tests give a stand-in. */
   fetch?: typeof fetch;
+  /**
+   * Asks a person at a terminal to pick from numbered choices: the indexes picked, or null when they
+   * picked none it could read. Absent where nobody can be asked.
+   */
+  ask?: Ask;
 }
+
+export type Ask = (question: string, choices: string[], multiple: boolean) => Promise<number[] | null>;
 
 export interface Result {
   document: Document;

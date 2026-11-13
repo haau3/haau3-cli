@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { main } from "./main.js";
-import { listenForEnter, openBrowser } from "./terminal.js";
+import { askOnTerminal, listenForEnter, openBrowser } from "./terminal.js";
 
 process.exitCode = await main(process.argv.slice(2), {
   stdout: process.stdout,
@@ -10,4 +10,5 @@ process.exitCode = await main(process.argv.slice(2), {
   cwd: process.cwd(),
   enter: () => listenForEnter(process.stdin),
   openBrowser: (url) => openBrowser(url),
+  ask: askOnTerminal(process.stdin, process.stdout),
 });

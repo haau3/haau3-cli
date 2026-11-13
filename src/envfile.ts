@@ -80,7 +80,8 @@ export function shownPath(path: string, cwd: string): string {
   return rel && !rel.startsWith("..") && !isAbsolute(rel) ? rel : path;
 }
 
-function homeOf(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): string {
+/** The home folder, as the environment names it. */
+export function homeOf(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): string {
   const configured = platform === "win32" ? env.USERPROFILE : env.HOME;
   return configured?.trim() ? configured : homedir();
 }
