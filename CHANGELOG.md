@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.11](https://github.com/haau3/haau3-cli/compare/v0.1.10...v0.1.11) (2026-11-13)
+
+
+### Bug Fixes
+
+* the README's example document names its own release ([#24](https://github.com/haau3/haau3-cli/issues/24)) ([b76c5e8](https://github.com/haau3/haau3-cli/commit/b76c5e8611f9e0ea061d5b3b4c12fe02715f214d))
+
 ## [0.1.10](https://github.com/haau3/haau3-cli/compare/v0.1.9...v0.1.10) (2026-11-13)
 
 
