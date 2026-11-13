@@ -117,8 +117,9 @@ its own approval.
 - `--name <name>` names the key. By default the name says haau3 made it, for which folder and on
   which day.
 - `--file <file>` writes to that env file. By default it writes to the file that already holds the
-  key, else `.env.local`, else `.env`, else a new `.env.local` for Next.js or Vite and `.env`
-  otherwise.
+  key. Otherwise, for Next.js, it writes to `.env.local` if there is one, else `.env`, else a new
+  `.env.local`. For any other project it writes to `.env`, Vite included, since Vite does not load
+  env files into `process.env`.
 - `--replace` replaces a key the file already holds. The old key is not revoked.
 
 In a git repository it writes only to a file git ignores. Otherwise it refuses and names the line to
@@ -194,7 +195,7 @@ Exit codes: `0`, it worked; `1`, it ran and something failed; `2`, it was used w
 
 | Variable | What it does |
 |---|---|
-| `HAAU3_API_KEY` | The API key: from the environment, else the project's env files, as its loader reads them (`.env.local`, then `.env` for Next.js or Vite; `.env` otherwise). |
+| `HAAU3_API_KEY` | The API key: from the environment, else the project's env files, as its loader reads them (`.env.local`, then `.env` for Next.js; `.env` otherwise). |
 | `HAAU3_ENVIRONMENT` | `production` or `sandbox`: the environment to call. With `sandbox`, no key is needed. |
 | `HAAU3_BASE_URL` | Call the API at another address, such as a stand-in, for development. |
 | `HAAU3_OUTPUT` | `json` or `text`: the output to print, whatever the terminal. |

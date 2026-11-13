@@ -3,8 +3,9 @@
 //
 // The file is the one named with --file; else whichever of .env.local and .env already holds
 // HAAU3_API_KEY, in the order the key finder reads them; else .env.local if it exists, then .env;
-// else a new one: .env.local for a project on Next.js or Vite, whose loaders read it, and .env for
-// everything else, which is the file Node's loadEnvFile(), python-dotenv, godotenv and Deno read.
+// else a new one: .env.local for a project on Next.js, whose loader reads it, and .env for everything
+// else, which is the file Node's loadEnvFile(), python-dotenv, godotenv and Deno read. Vite is not
+// Next.js here: it loads env files into import.meta.env, never into the process.env a server reads.
 //
 // The edit is planned and checked before the platform is asked for a key: read back with Node's own
 // parser, the variable must hold the new value and every other variable must read as it did. The
@@ -112,7 +113,10 @@ function exists(path: string): boolean {
   }
 }
 
-/** Whether the folder's package.json depends on Next.js or Vite, whose loaders read .env.local. */
+/**
+ * Whether the folder's package.json depends on Next.js, whose loader reads .env.local into process.env.
+ * Not Vite: it puts env files in import.meta.env, so a Vite app's server code sees neither file.
+ */
 export function readsEnvLocal(folder: string): boolean {
   const text = readIfFile(join(folder, "package.json"));
   if (text === null) return false;
@@ -120,7 +124,7 @@ export function readsEnvLocal(folder: string): boolean {
     const manifest = JSON.parse(text) as Record<string, unknown>;
     return ["dependencies", "devDependencies"].some((field) => {
       const deps = manifest[field];
-      return typeof deps === "object" && deps !== null && ("next" in deps || "vite" in deps);
+      return typeof deps === "object" && deps !== null && "next" in deps;
     });
   } catch {
     return false;
@@ -184,8 +188,8 @@ export function chooseFile({
     const path = join(folder, name);
     return { path, shown: name, reason: "existing" };
   };
-  // The files the project's loader reads, in its order: .env.local then .env for Next.js and Vite,
-  // .env alone otherwise (owner, 2026-11-12), so doctor finds the key where this writes it.
+  // The files the project's loader reads, in its order: .env.local then .env for Next.js, .env alone
+  // otherwise, so doctor finds the key where this writes it.
   const local = readsEnvLocal(folder);
   const files = local ? KEY_FILES : ([".env"] as const);
   for (const name of files) {
