@@ -18,6 +18,8 @@ export interface HttpRequest {
   bearer?: AccessToken;
   /** How long the request may take, the body included. 30 seconds unless the caller has less to spare. */
   timeoutMs?: number;
+  /** A POST with no body, for an endpoint that takes none (`keys revoke`). Otherwise a body makes it a POST. */
+  post?: boolean;
 }
 
 /** An answer, its body parsed when it is JSON; or no answer at all. */
@@ -45,7 +47,7 @@ export async function call(url: string, request: HttpRequest = {}): Promise<Http
   if (request.bearer) headers.Authorization = `Bearer ${request.bearer.reveal()}`;
   try {
     const response = await fetch(url, {
-      method: body === undefined ? "GET" : "POST",
+      method: body === undefined && !request.post ? "GET" : "POST",
       headers,
       body,
       redirect: "manual",

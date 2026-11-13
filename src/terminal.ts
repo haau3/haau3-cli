@@ -43,6 +43,39 @@ export function askOnTerminal(stdin: NodeJS.ReadStream, stdout: NodeJS.WriteStre
   };
 }
 
+/**
+ * Whether a typed answer is the expected text, as GitHub's CLI compares a typed name: spaces around it
+ * ignored, and case too, after both are put in one Unicode form.
+ */
+export function sameText(answer: string, expected: string): boolean {
+  const fold = (s: string) => s.normalize("NFC").trim().toLowerCase();
+  return fold(answer) === fold(expected) && fold(expected) !== "";
+}
+
+/**
+ * Asks a person at a terminal to type `expected` to confirm, at most three times: true when they do.
+ * Ctrl-D, or the input ending, is no answer, and so is three answers that are not it.
+ */
+export function confirmOnTerminal(stdin: NodeJS.ReadStream, stdout: NodeJS.WriteStream) {
+  return async (question: string, prompt: string, expected: string): Promise<boolean> => {
+    const rl = createInterface({ input: stdin, output: stdout, terminal: false });
+    const closed = new Promise<null>((resolve) => rl.once("close", () => resolve(null)));
+    try {
+      stdout.write(`${question}\n`);
+      for (let tries = 0; tries < 3; tries++) {
+        const answer = await Promise.race([rl.question(prompt).catch(() => null), closed]);
+        if (answer === null) return false;
+        if (sameText(answer, expected)) return true;
+        if (tries < 2) stdout.write("That does not match.\n");
+      }
+      return false;
+    } finally {
+      rl.close();
+      stdin.pause();
+    }
+  };
+}
+
 /** Resolves when a line is entered on stdin. stop() stops listening, so the process can end. */
 export function listenForEnter(stdin: NodeJS.ReadStream): { pressed: Promise<void>; stop(): void } {
   let stop = () => {};

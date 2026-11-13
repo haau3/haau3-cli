@@ -163,6 +163,49 @@ its own approval.
 In a git repository it writes only to a file git ignores. Otherwise it refuses and names the line to
 add to the `.gitignore`.
 
+### keys list
+
+```sh
+npx haau3 keys list
+npx haau3 keys list --all
+```
+
+Lists the signed-in organization's keys, newest first, as the keys page lists them. For each key it
+shows the name, the prefix, the mode, when the key was made and how, when it was last used, and the
+id. It never shows a key. Revoked keys are left out unless `--all` asks for them. It marks the key
+this project uses, found where the application finds it. When that key is not among the listed
+keys, it says so: the key may be revoked, or another organization's. Listing changes nothing, so the
+session stays.
+
+### keys revoke
+
+```sh
+npx haau3 keys revoke <id>
+```
+
+Revokes one of the organization's keys, by the id `keys list` shows. A revoked key cannot be
+brought back, and anything using it stops at once. So `keys revoke` shows the key, says whether this
+project uses it, and asks you to type its name. **It runs only for a person at a terminal.** With no
+terminal, or when a coding agent runs it, it revokes nothing and exits 2 with
+`confirmation-needed`. It names the key it would have revoked and the command to run yourself, and
+it points to the keys page. No flag skips the question.
+
+**Revoking ends the sign-in**, as making a key does, so each change to a key takes its own approval.
+A playground key the dashboard keeps cannot be revoked. A key revoked already exits 0 and changes
+nothing. To rotate a key, run `keys create --replace`, sign in again, then revoke the old key.
+
+### Switching organization
+
+A sign-in acts for the one organization picked on the approval page. To act for another, sign out,
+then sign in and pick it there:
+
+```sh
+npx haau3 logout
+npx haau3 login
+```
+
+`whoami` says which organization the session acts for.
+
 ## What it never does
 
 - It never shows a key. No flag prints one, and none is in its output or its errors.
@@ -174,6 +217,7 @@ add to the `.gitignore`.
 - It sends a key only to `api.haau3.com`, `sandbox.haau3.com` or this computer. It reads the skill
   from `docs.haau3.com`, and sends it no key and no session.
 - A session can do only what its member can do on the dashboard.
+- It never revokes a key without a person at a terminal typing the key's name.
 
 ## For coding agents
 
@@ -181,7 +225,9 @@ When a coding agent runs it, every command prints one JSON document, never a pro
 `npx haau3 doctor --json` first, branch on `ok`, and run the commands in `next`. To make a key, run
 `login`, give the person the page and the code it prints, then run `login --complete` and
 `keys create`. The key goes into the env file, never through the chat. `npx haau3 init` adds the
-haau3 skill and the docs' MCP server for the project's coding agents.
+haau3 skill and the docs' MCP server for the project's coding agents. An agent can list keys with
+`keys list`, but not revoke one: `keys revoke` refuses it, and its error names the key and the
+command the person runs in their own terminal.
 
 ## Output
 

@@ -3,12 +3,14 @@
 import { parseArgs, type ParseArgsOptionsConfig } from "node:util";
 import { doctor } from "./commands/doctor.js";
 import { keysCreate } from "./commands/keys.js";
+import { keysList } from "./commands/keys-list.js";
+import { keysRevoke } from "./commands/keys-revoke.js";
 import { login } from "./commands/login.js";
 import { logout } from "./commands/logout.js";
 import { test } from "./commands/test.js";
 import { whoami } from "./commands/whoami.js";
 import { init } from "./commands/init.js";
-import type { Ask, Context, Result } from "./commands/context.js";
+import type { Ask, Confirm, Context, Result } from "./commands/context.js";
 import { HELP, helpText } from "./help.js";
 import {
   agentDetected,
@@ -45,6 +47,8 @@ export interface Io {
   fetch?: typeof fetch;
   /** Asks a person at a terminal to pick. Only used when a person is at a terminal. */
   ask?: Ask;
+  /** Asks a person at a terminal to type a name to confirm. Only used when a person is at a terminal. */
+  confirm?: Confirm;
 }
 
 const GLOBAL_OPTIONS = {
@@ -78,6 +82,9 @@ const KEYS = new Map<string, Command>([
         keysCreate(ctx, { test: values.test === true, replace: values.replace === true, name: stringValue(values.name), file: stringValue(values.file) }),
     },
   ],
+  ["list", { options: { all: { type: "boolean" } }, run: (ctx, values) => keysList(ctx, { all: values.all === true }) }],
+  // One argument, the key's id. No flag skips the typed confirmation, by design.
+  ["revoke", { options: {}, takes: 1, run: (ctx, _values, args) => keysRevoke(ctx, { id: args[0] }) }],
 ]);
 
 /** Every command, by name. A Map, so no name typed by mistake can reach an object's own properties. */
@@ -247,6 +254,7 @@ function context(io: Io, format: Format): Context {
     enter: interactive ? io.enter : undefined,
     openBrowser: interactive ? io.openBrowser : undefined,
     ask: interactive ? io.ask : undefined,
+    confirm: interactive ? io.confirm : undefined,
     fetch: io.fetch,
   };
 }
