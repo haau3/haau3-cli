@@ -75,9 +75,10 @@ describe("release-please", () => {
     const readme = read("README.md");
     const block = /<!-- x-release-please-start-version -->\n```json\n([\s\S]*?)```\n<!-- x-release-please-end -->/.exec(readme);
     expect(block, "the marked block").not.toBeNull();
-    expect(block![1]).toContain(`"cliVersion": "${pkg.version}"`);
+    const document = block?.[1] ?? "";
+    expect(document).toContain(`"cliVersion": "${pkg.version}"`);
     // Inside the block release-please replaces every x.y.z, so nothing else in it may look like one.
-    expect(block![1].match(/\d+\.\d+\.\d+/g)).toEqual([pkg.version]);
+    expect(document.match(/\d+\.\d+\.\d+/g)).toEqual([pkg.version]);
     expect(readme.match(/x-release-please-start-version/g)).toHaveLength(1);
   });
 
