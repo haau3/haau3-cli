@@ -126,7 +126,7 @@ export function planToml(text: string | null, file: string, url: string): Plan {
   const servers = lines.findIndex((line) => /^[ \t]*\[mcp_servers\][ \t]*(?:#.*)?$/.test(line));
   if (servers !== -1) {
     const end = lines.findIndex((line, i) => i > servers && ANY_HEADER.test(line));
-    if (lines.slice(servers + 1, end === -1 ? lines.length : end).some((line) => /haau3/.test(line))) return leave(`already names an ${SERVER_NAME} server in a way haau3 does not read`);
+    if (lines.slice(servers + 1, end === -1 ? lines.length : end).some((line) => line.includes(SERVER_NAME))) return leave(`already names an ${SERVER_NAME} server in a way haau3 does not read`);
   }
   const eol = body.includes("\r\n") ? "\r\n" : "\n";
   const ending = body.endsWith("\n") ? "" : eol;

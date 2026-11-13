@@ -67,6 +67,8 @@ export function resolvePlatform(env: NodeJS.ProcessEnv): PlatformResult {
 export function resolveDocs(env: NodeJS.ProcessEnv): DocsResult {
   const configured = env[DOCS_URL_VARIABLE]?.trim();
   if (!configured) return { ok: true, docsURL: DEFAULT_DOCS_URL };
+  // Its address is printed and written into MCP files, so it may hold no key.
+  if (/haau3_sk_/i.test(configured)) return { ok: false, error: invalidAddress(DOCS_URL_VARIABLE, "holds an API key", "invalid-docs-url", `Read the skill from ${DEFAULT_DOCS_URL}.`) };
   const checked = checkAddress(configured);
   if (!checked.ok) return { ok: false, error: invalidAddress(DOCS_URL_VARIABLE, checked.why, "invalid-docs-url", `Read the skill from ${DEFAULT_DOCS_URL}, the address it has unless you are developing against another.`) };
   return { ok: true, docsURL: checked.address };

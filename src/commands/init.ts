@@ -10,16 +10,17 @@ import { basename, dirname, isAbsolute, join, parse, relative, resolve } from "n
 import { AGENT_NAMES, AGENTS, detectAgents, isAgent, type Agent } from "../agents/detect.js";
 import type { FileOutcome } from "../agents/files.js";
 import { addMcpEntries, entryText, MCP_TARGETS } from "../agents/mcp.js";
-import { fetchSkill, SKILL_FILES, writeSkill } from "../agents/skill.js";
+import { inspectProjectFile } from "../agents/files.js";
+import { fetchSkill, MAX_SKILL_BYTES, SKILL_FILES, writeSkill } from "../agents/skill.js";
 import { sandboxNamed } from "../calls.js";
 import { chooseFile, fileFlagError, homeOf, printablePath, readsEnvLocal, shownPath } from "../envfile.js";
 import { DEFAULT_DOCS_URL, DOCS_URL_VARIABLE, resolveDocs } from "../environment.js";
 import { gitAnswer, sameFolder } from "../git.js";
 import { EXIT, failure, success, type CliError, type NextStep } from "../output.js";
-import { ADD, ALL_MANAGERS, detectManager, MANAGERS, managerFor, MANIFEST_FILES, UPGRADE, type Manager, type ManagerFound } from "../packages.js";
+import { ADD, ALL_MANAGERS, detectManager, MANAGERS, managerFor, MANIFEST_FILES, UPGRADE, upward, type Manager, type ManagerFound } from "../packages.js";
 import { readProject, SDK_FLOORS, type Language, type Project } from "../project.js";
 import { findProgram, runProgram } from "../run.js";
-import { findSettings } from "../settings.js";
+import { findSettings, KEY_VARIABLE, type Settings } from "../settings.js";
 import { arg, doctorStep, fileFlag, KEYS_CREATE_STEP, keysCreateStep, LOGIN_STEP, misused, type Context, type Result } from "./context.js";
 import { gitignoreLine } from "./keys.js";
 
@@ -42,7 +43,8 @@ export interface InitCheck {
 /** A file init wrote, itself or through the package manager. */
 export interface Changed {
   file: string;
-  action: "created" | "updated";
+  /** deleted: a file the package manager removed, such as another manager's lockfile. */
+  action: "created" | "updated" | "deleted";
 }
 
 export interface InitOptions {
@@ -141,8 +143,8 @@ function changesBetween(before: Map<string, string | null>, after: Map<string, s
   const changed: Changed[] = [];
   for (const [path, now] of after) {
     const was = before.get(path) ?? null;
-    if (now === null || now === was) continue;
-    changed.push({ file: relative(cwd, path) || basename(path), action: was === null ? "created" : "updated" });
+    if (now === was) continue;
+    changed.push({ file: relative(cwd, path) || basename(path), action: now === null ? "deleted" : was === null ? "created" : "updated" });
   }
   return changed;
 }
@@ -214,7 +216,9 @@ async function sdkStep(
       changed: [],
     };
   }
-  const folders = [folder, found.folder];
+  // Every folder a manager could write to: the project's, and each above it in the same repository,
+  // where a workspace keeps the one lockfile its members share.
+  const folders = [...new Set([folder, found.folder, ...upward(folder, homeOf(ctx.env, platform), platform)])];
   const before = snapshot(folders);
   ctx.say(`Running ${commandLine}\n`);
   const ran = await runProgram(program, args, {
@@ -222,15 +226,24 @@ async function sdkStep(
     env: ctx.env,
     timeoutMs: INSTALL_TIMEOUT_MS,
     platform,
-    output: ctx.format === "text" ? (text) => ctx.say(text) : undefined,
+    // Its own words, for a person at a terminal only: never into a document, a pipe or an agent's context.
+    output: ctx.interactive ? (text) => ctx.say(text) : undefined,
   });
   const changed = changesBetween(before, snapshot(folders), folder);
   const details = { package: name, installedBy: commandLine };
   const again: NextStep = { command: commandLine, description: "Run it yourself in the project's folder to see what went wrong." };
   if (ran.kind === "timed-out") {
-    return { check: check("sdk", "fail", `${commandLine} did not finish within ${INSTALL_TIMEOUT_MS / 60_000} minutes, so haau3 stopped it.`, [again], details), changed };
+    return { check: check("sdk", "fail", `${commandLine} did not finish within ${INSTALL_TIMEOUT_MS / 60_000} minutes, so haau3 stopped it and every program it started.`, [again], details), changed };
   }
-  if (ran.kind === "not-started") return { check: check("sdk", "fail", `${commandLine} could not be started.`, [again], details), changed };
+  if (ran.kind === "not-started") {
+    const why =
+      ran.why === "network-folder"
+        ? ` ${MANAGER_NAME[manager]} is a Windows .cmd program, and cmd.exe cannot start one in a network folder: run it from a folder on a drive.`
+        : ran.why === "path"
+          ? ` Its path holds a character cmd.exe would read as part of a command.`
+          : "";
+    return { check: check("sdk", "fail", `${commandLine} could not be started.${why}`, [again], details), changed };
+  }
   if (ran.code !== 0) return { check: check("sdk", "fail", `${commandLine} failed (exit code ${ran.code}), so ${name} may not be installed.`, [again], details), changed };
   const now = readProject(folder).sdks.find((sdk) => sdk.language === language);
   if (!now) return { check: check("sdk", "warn", `${commandLine} finished, yet ${MANIFESTS[language]} does not name ${name}.`, [again], details), changed };
@@ -272,6 +285,18 @@ async function skillStep(ctx: Context, agents: Agent[], docsURL: string, folder:
   const source = `${docsURL}/skill.md`;
   const fetched = await fetchSkill(docsURL, ctx.fetch ?? fetch);
   if (!fetched.ok) {
+    // A skill already in each place is kept: set up before, it stays set up, though not checked as current.
+    const files = [...new Set(agents.map((agent) => SKILL_FILES[agent]))];
+    const kept = files.every((file) => {
+      const inspected = inspectProjectFile(folder, file, MAX_SKILL_BYTES);
+      return inspected.ok && inspected.exists;
+    });
+    if (kept) {
+      return {
+        check: check("skill", "warn", `${list(files)} ${files.length === 1 ? "is" : "are"} kept as ${files.length === 1 ? "it is" : "they are"}, not checked as current: ${fetched.why}.`, [], { source, files: [] }),
+        changed: [],
+      };
+    }
     return {
       check: check("skill", "fail", `The haau3 skill was not added: ${fetched.why}.`, [{ command: rerun(options), description: "Run init again once the docs answer." }], { source, files: [] }),
       changed: [],
@@ -330,13 +355,44 @@ interface EnvStep {
   tracked: boolean;
 }
 
-async function envStep(ctx: Context, folder: string, options: InitOptions, platform: NodeJS.Platform): Promise<EnvStep> {
+/**
+ * A key in a file this project's loader does not read, such as .env.local outside Next.js, where
+ * keys create wrote for Vite before 0.1.9: git must still ignore it, and the app never sees it.
+ */
+async function unloadedKeyStep(ctx: Context, folder: string, settings: Settings, env: EnvStep, again: NextStep): Promise<EnvStep> {
+  const unloaded = settings.unloadedKey;
+  if (!unloaded?.path) return env;
+  const move = `${unloaded.source} also holds ${KEY_VARIABLE}, which this project's loader does not read: only Next.js loads it. Move the key to ${env.shown}.`;
+  const git = await gitAnswer(unloaded.path, ctx.env, folder);
+  if (git.kind === "not-ignored") {
+    const besideFile = shownPath(join(dirname(unloaded.path), ".gitignore"), folder);
+    const gitignore = printablePath(besideFile) ? besideFile : ".gitignore";
+    const line = gitignoreLine(basename(unloaded.path));
+    return {
+      check: check(
+        "env-file-ignored",
+        "fail",
+        `git ${git.tracked ? "tracks" : "does not ignore"} ${unloaded.source}, which holds a key, so the key could be committed. Add this line to ${gitignore}:\n  ${line}\n${move}`,
+        [{ ...again, description: `Check again after adding ${line} to ${gitignore}.` }],
+        { ...env.check.details, unloaded: unloaded.source, unloadedGit: git.kind, gitignore: { file: gitignore, line } },
+      ),
+      shown: unloaded.source,
+      gitignore: { file: gitignore, line },
+      tracked: git.tracked,
+    };
+  }
+  if (env.check.status === "fail") return { ...env, check: { ...env.check, message: `${env.check.message}\n${move}` } };
+  return { ...env, check: { ...env.check, status: "warn", message: `${env.check.message} ${move}`, details: { ...env.check.details, unloaded: unloaded.source } } };
+}
+
+async function envStep(ctx: Context, folder: string, options: InitOptions, platform: NodeJS.Platform, settings: Settings): Promise<EnvStep> {
   const chosen = chooseFile({ cwd: folder, file: options.file, env: ctx.env, platform });
   if (!chosen.ok) return { check: check("env-file-ignored", "warn", chosen.error.message, [], { file: null }), shown: ".env", gitignore: null, tracked: false };
   const target = chosen.chosen;
   const shown = target.shown;
-  const holds = target.reason === "holds-key";
-  const where = holds ? `${shown}, which holds the key,` : `${shown}, where keys create will write the key,`;
+  // "Holds the key" only when the file gives it a value: an empty one is a line, not a key.
+  const holds = target.reason === "holds-key" && settings.key?.path === target.path;
+  const where = holds ? `${shown}, which holds the key,` : target.reason === "holds-key" ? `${shown}, which sets ${KEY_VARIABLE},` : `${shown}, where keys create will write the key,`;
   const git = await gitAnswer(target.path, ctx.env, folder);
   const details: Record<string, unknown> = { file: shown, git: git.kind };
   const line = gitignoreLine(basename(target.path));
@@ -406,7 +462,7 @@ function loader(language: Language, manager: Manager, file: string, nextjs: bool
     return {
       step: {
         command: `node --env-file-if-exists=${arg(file)} <your program>`,
-        description: `Start your program this way so it reads ${file}: Node reads no env file by itself. It needs Node 22.9 or newer; process.loadEnvFile() at the program's start does the same.`,
+        description: `Start your program this way, with its file in place of <your program>, so it reads ${file}: Node reads no env file by itself. It needs Node 22.9 or newer; process.loadEnvFile() at the program's start does the same.`,
       },
       note: `Node reads no env file by itself.`,
     };
@@ -414,7 +470,10 @@ function loader(language: Language, manager: Manager, file: string, nextjs: bool
   if (language === "python") {
     if (manager === "uv") {
       return {
-        step: { command: `uv run --env-file ${arg(file)} <your program>`, description: `Run your program this way so it reads ${file}: Python reads no env file by itself.` },
+        step: {
+          command: `uv run --env-file ${arg(file)} <your program>`,
+          description: `Run your program this way, with its file in place of <your program>, so it reads ${file}: Python reads no env file by itself.`,
+        },
         note: "Python reads no env file by itself.",
       };
     }
@@ -446,7 +505,7 @@ export async function init(ctx: Context, options: InitOptions): Promise<Result> 
 
   // Every flag is checked before anything is read, asked or changed.
   if (options.file !== undefined) {
-    const refused = fileFlagError(options.file, { command: "npx haau3 init", description: "Check the project's own env file instead." });
+    const refused = fileFlagError(options.file, { command: rerun({ ...options, file: undefined }), description: "Check the project's own env file instead." });
     if (refused) return misused(COMMAND, refused);
   }
   if (options.language !== undefined && !(LANGUAGES as readonly string[]).includes(options.language)) {
@@ -577,9 +636,10 @@ export async function init(ctx: Context, options: InitOptions): Promise<Result> 
         const keep = { language: project.languages.length > 1 ? language : options.language };
         return choiceNeeded(
           `No coding agent was found in this project. Name each one to set up with --agent (${list([...AGENTS])}), or set up none with --no-agent.`,
+          // No agent first: an agent init does not set up may be the one reading this.
           [
-            { command: rerun(options, { ...keep, agents: ["claude-code"] }), description: `Set up Claude Code. Give --agent once for each agent: ${list([...AGENTS])}.` },
             { command: rerun(options, { ...keep, noAgent: true }), description: "Set up no coding agent: only the SDK and the env file." },
+            { command: rerun(options, { ...keep, agents: ["claude-code"] }), description: `Set up Claude Code. Give --agent once for each agent: ${list([...AGENTS])}.` },
           ],
         );
       }
@@ -604,20 +664,22 @@ export async function init(ctx: Context, options: InitOptions): Promise<Result> 
   const mcp = mcpStep(agents, docs.docsURL, folder);
   checks.push(mcp.check);
   changed.push(...mcp.changed);
-  const env = await envStep(ctx, folder, options, platform);
+  const settings = findSettings({ cwd: folder, env: ctx.env, file: options.file });
+  const env = await unloadedKeyStep(ctx, folder, settings, await envStep(ctx, folder, options, platform, settings), { command: rerun(options), description: "" });
 
   const how = loader(language, found.manager, env.shown, readsEnvLocal(folder));
   if (env.check.status === "pass" || env.check.status === "skip") env.check.message = `${env.check.message} ${how.note}`;
   checks.push(env.check);
 
-  // What to run next: the fixes first, then the way from here to a working call.
-  const settings = findSettings({ cwd: folder, env: ctx.env, file: options.file });
-  const keyed = settings.key !== null || sandboxNamed(settings);
+  // What to run next: the fixes first, then the way from here to a working call, each runnable in
+  // order. A key already here, in a file the app loads or one it should, needs no new one; and the
+  // way the program loads its env file comes last, once keys create has made that file.
+  const keyed = settings.key !== null || settings.unloadedKey !== null || sandboxNamed(settings);
   const failedChecks = checks.filter((c) => c.status === "fail");
   const warned = checks.filter((c) => c.status === "warn");
   const keysStep = options.file === undefined ? KEYS_CREATE_STEP : keysCreateStep({ file: options.file }, KEYS_CREATE_STEP.description);
   const onward = keyed ? [doctorStep(options.file)] : [TEST_STEP, LOGIN_STEP, keysStep, doctorStep(options.file)];
-  const next = unique([...failedChecks.flatMap((c) => c.next), ...warned.flatMap((c) => c.next), ...(how.step ? [how.step] : []), ...onward]);
+  const next = unique([...failedChecks.flatMap((c) => c.next), ...warned.flatMap((c) => c.next), ...onward, ...(how.step ? [how.step] : [])]);
 
   const data = {
     language,
@@ -631,7 +693,8 @@ export async function init(ctx: Context, options: InitOptions): Promise<Result> 
   };
 
   const lines = [`Set up this ${LANGUAGE_NAME[language]} project for haau3.`, "", ...checks.map(lineOf), ""];
-  lines.push(changed.length ? `Changed:\n${changed.map((c) => `  ${c.action.padEnd(7)}  ${c.file}`).join("\n")}` : "Changed nothing: it was already set up.", "");
+  const allSet = failedChecks.length === 0 && warned.length === 0;
+  lines.push(changed.length ? `Changed:\n${changed.map((c) => `  ${c.action.padEnd(7)}  ${c.file}`).join("\n")}` : allSet ? "Changed nothing: it was already set up." : "Changed nothing.", "");
   if (failedChecks.length === 0) {
     lines.push(warned.length === 0 ? "Set up." : `Set up, with ${warned.length} warning${warned.length === 1 ? "" : "s"}.`);
     lines.push("", "Next:", ...next.map((step) => `  ${step.command}\n    ${step.description}`));
@@ -658,8 +721,7 @@ export async function init(ctx: Context, options: InitOptions): Promise<Result> 
       ...(env.gitignore ? { gitignore: env.gitignore } : {}),
     };
   }
-  const notFailed = next.filter((step) => !error.next.some((n) => n.command === step.command));
-  if (notFailed.length) lines.push("Then:", ...notFailed.map((step) => `  ${step.command}\n    ${step.description}`), "");
+  // At a terminal the error and its steps follow on stderr; the rest of the way is for the run after the fix.
   return { document: failure(COMMAND, error, null, data), text: `${lines.join("\n")}\n`, exit: EXIT.failed };
 }
 

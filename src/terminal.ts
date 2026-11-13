@@ -25,10 +25,13 @@ export function parseChoice(answer: string, count: number, multiple: boolean): n
 export function askOnTerminal(stdin: NodeJS.ReadStream, stdout: NodeJS.WriteStream) {
   return async (question: string, choices: string[], multiple: boolean): Promise<number[] | null> => {
     const rl = createInterface({ input: stdin, output: stdout, terminal: false });
+    // Ctrl-D, or the input ending, closes the interface: no answer, so no choice.
+    const closed = new Promise<null>((resolve) => rl.once("close", () => resolve(null)));
     try {
       stdout.write(`${question}\n${choices.map((choice, i) => `  ${i + 1}. ${choice}`).join("\n")}\n`);
       for (let tries = 0; tries < 3; tries++) {
-        const answer = await rl.question(multiple ? "Numbers, separated by commas: " : "Number: ");
+        const answer = await Promise.race([rl.question(multiple ? "Numbers, separated by commas: " : "Number: ").catch(() => null), closed]);
+        if (answer === null) return null;
         const picked = parseChoice(answer, choices.length, multiple);
         if (picked) return picked;
       }

@@ -218,7 +218,7 @@ The document:
   field you don't know. A new major version changes or removes one, so refuse a major version you
   don't know.
 - Every field is always present. Branch on `ok`. On success `error` is `null`. On failure `data` is
-  `null`, except for `doctor` and `test`, whose report is in `data` either way (since 1.3).
+  `null`, except for `doctor`, `test` and `init`, whose report is in `data` either way (since 1.3).
 - `environment` is `production` or `sandbox` when the document is about an API key or a call to the
   API, and `null` otherwise.
 - `error.code` is what to branch on, and `error.next` lists commands to run next. On success,

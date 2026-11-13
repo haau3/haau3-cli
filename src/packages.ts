@@ -80,6 +80,9 @@ const PYTHON_LOCKFILES: readonly [string, Manager][] = [
 export const MANIFEST_FILES: readonly string[] = [
   "package.json",
   ...NODE_LOCKFILES.map(([name]) => name),
+  // Yarn's Plug'n'Play files, which take node_modules' place.
+  ".pnp.cjs",
+  ".pnp.loader.mjs",
   "pyproject.toml",
   "requirements.txt",
   "Pipfile",
@@ -131,29 +134,54 @@ function shown(folder: string, cwd: string, name: string): string {
 }
 
 /**
- * The folders to look in: the project's, then each above it, stopping after a repository's top folder
- * (one holding .git), the home folder, or the drive's root, so an unrelated file far above is not read.
+ * The folders a project can share files with: its own, then each above it inside the same
+ * repository, up to its top folder (the one holding .git). Never the home folder, any folder above
+ * it, or anything above a project outside a repository, so a stray file there is never the project's.
  */
-function upward(cwd: string, home: string, platform: NodeJS.Platform): string[] {
-  const folders: string[] = [];
-  let at = resolve(cwd);
-  for (;;) {
-    folders.push(at);
-    if (exists(join(at, ".git")) || sameFolder(at, home, platform)) break;
+export function upward(cwd: string, home: string, platform: NodeJS.Platform): string[] {
+  const start = resolve(cwd);
+  const folders: string[] = [start];
+  if (!exists(join(start, ".git")) && !repositoryAbove(start, home, platform)) return folders;
+  let at = start;
+  while (!exists(join(at, ".git"))) {
     const up = dirname(at);
-    if (up === at) break;
+    if (up === at || sameFolder(up, home, platform)) break;
     at = up;
+    folders.push(at);
   }
   return folders;
 }
 
-function fromFiles(folders: string[], cwd: string, lockfiles: readonly [string, Manager][], local: (folder: string) => [string, Manager][]): ManagerResult | null {
+/** Whether a folder above, below the home folder, holds a repository. */
+function repositoryAbove(start: string, home: string, platform: NodeJS.Platform): boolean {
+  let at = dirname(start);
+  while (at !== dirname(at) && !sameFolder(at, home, platform)) {
+    if (exists(join(at, ".git"))) return true;
+    at = dirname(at);
+  }
+  return false;
+}
+
+/**
+ * The manager the files name, nearest folder first. A folder above counts only where it is a project
+ * itself (`manifest` there): a workspace's top, whose lockfile its members share.
+ */
+function fromFiles(
+  folders: string[],
+  cwd: string,
+  lockfiles: readonly [string, Manager][],
+  local: (folder: string) => [string, Manager][],
+  manifest: string,
+): ManagerResult | null {
   for (const folder of folders) {
-    const found: [string, Manager][] = [...(folder === folders[0] ? local(folder) : []), ...lockfiles.filter(([name]) => isFile(join(folder, name)))];
+    const own = folder === folders[0];
+    if (!own && !isFile(join(folder, manifest))) continue;
+    const found: [string, Manager][] = [...(own ? local(folder) : []), ...lockfiles.filter(([name]) => isFile(join(folder, name)))];
     const managers = [...new Set(found.map(([, manager]) => manager))];
     if (managers.length === 1) {
       const [name, manager] = found[0]!;
-      return { ok: true, found: { manager, how: lockfiles.some(([file]) => file === name) ? "lockfile" : "project-file", evidence: shown(folder, cwd, name), folder } };
+      const how = [...NODE_LOCKFILES, ...PYTHON_LOCKFILES].some(([file]) => file === name) ? "lockfile" : "project-file";
+      return { ok: true, found: { manager, how, evidence: shown(folder, cwd, name), folder } };
     }
     if (managers.length > 1) return { ok: false, candidates: managers, evidence: found.map(([name]) => shown(folder, cwd, name)) };
   }
@@ -186,18 +214,21 @@ export function detectManager({
     for (const at of folders) {
       const field = packageManagerField(at);
       if (field) return { ok: true, found: { manager: field, how: "package-manager-field", evidence: shown(at, folder, "package.json"), folder: at } };
-      if (NODE_LOCKFILES.some(([name]) => isFile(join(at, name)))) break;
+      if (NODE_LOCKFILES.some(([name]) => isFile(join(at, name))) && isFile(join(at, "package.json"))) break;
     }
-    const files = fromFiles(folders, folder, NODE_LOCKFILES, () => []);
+    const files = fromFiles(folders, folder, NODE_LOCKFILES, () => [], "package.json");
     if (files) return files;
     const ran = ranBy(env);
     if (ran) return { ok: true, found: { manager: ran, how: "ran-init", evidence: null, folder } };
     return { ok: true, found: { manager: "npm", how: "default", evidence: null, folder } };
   }
 
-  // Python: the lockfiles, and in the project's own folder its Pipfile and pyproject.toml's tool tables.
-  const files = fromFiles(folders, folder, PYTHON_LOCKFILES, (at) => {
-    const local: [string, Manager][] = [];
+  // Python: in the project's own folder, every tool's lockfile, its Pipfile and pyproject.toml's tool
+  // tables; above it, only a uv workspace's uv.lock. Poetry and Pipenv in a folder above would edit
+  // that folder's project, not this one.
+  const above = PYTHON_LOCKFILES.filter(([name]) => name === "uv.lock");
+  const files = fromFiles(folders, folder, above, (at) => {
+    const local: [string, Manager][] = PYTHON_LOCKFILES.filter(([name]) => name !== "uv.lock" && isFile(join(at, name)));
     if (isFile(join(at, "Pipfile"))) local.push(["Pipfile", "pipenv"]);
     const pyproject = readSmallText(join(at, "pyproject.toml"), 1024 * 1024);
     if (pyproject.state === "read") {
@@ -206,7 +237,7 @@ export function detectManager({
       if (lines.some((line) => /^\s*\[tool\.uv[.\]]/.test(line))) local.push(["pyproject.toml", "uv"]);
     }
     return local;
-  });
+  }, "pyproject.toml");
   if (files) return files;
   return { ok: true, found: { manager: "pip", how: "default", evidence: null, folder } };
 }
