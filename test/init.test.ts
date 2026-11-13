@@ -2,7 +2,7 @@
 // second run changes nothing, that with no terminal it asks nothing and names the flag for a choice it
 // cannot make, and that it leaves the person's own files as they were when it cannot be sure.
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -84,7 +84,7 @@ describe("an npm project", () => {
     const first = await init(["--agent", "claude-code", "--agent", "codex"]);
     expect(first.code).toBe(0);
     expect(first.document).toMatchObject({ formatVersion: "1.3", command: "init", ok: true, environment: null, error: null });
-    expect(managers.calls()).toEqual([{ name: "npm", args: ["install", "@haau3/sdk"], cwd: expect.any(String) }]);
+    expect(managers.calls()).toEqual([{ name: "npm", args: ["install", "@haau3/sdk"], cwd: expect.any(String), keyInEnv: false }]);
     expect(JSON.parse(read("package.json")).dependencies).toEqual({ "@haau3/sdk": "^0.4.4" });
     expect(read(".claude/skills/haau3/SKILL.md")).toBe(SKILL);
     expect(read(".agents/skills/haau3/SKILL.md")).toBe(SKILL);
@@ -112,7 +112,11 @@ describe("an npm project", () => {
     expect(out.stdout).toContain("Set up this TypeScript or JavaScript project for haau3.");
     expect(out.stdout).toContain("Running npm install @haau3/sdk");
     expect(out.stdout).toMatch(/Changed:\n {2}updated {2}package\.json/);
-    expect(out.stdout).toContain("Next:\n  node --env-file-if-exists=.env <your program>");
+    // Each step runnable in order: the way the program loads the env file last, once keys create made it.
+    expect(out.stdout).toContain("Next:\n  npx haau3 test");
+    expect(out.stdout).toMatch(/npx haau3 doctor\n.*\n {2}node --env-file-if-exists=\.env <your program>/);
+    // The package manager's own words are for a person at a terminal: stdin is not one here.
+    expect(out.stdout).not.toContain("the stand-in says");
     const again = await init(["--no-agent"], { tty: true });
     expect(again.stdout).toContain("Changed nothing: it was already set up.");
   });
@@ -178,7 +182,7 @@ describe("the package manager", () => {
     ]);
     const named = await init(["--no-agent", "--package-manager", "uv"]);
     expect(named.code).toBe(0);
-    expect(managers.calls()).toEqual([{ name: "uv", args: ["add", "haau3"], cwd: expect.any(String) }]);
+    expect(managers.calls()).toEqual([{ name: "uv", args: ["add", "haau3"], cwd: expect.any(String), keyInEnv: false }]);
   });
 
   it("leaves an SDK older than its floor alone, and names the upgrade", async () => {
@@ -264,7 +268,7 @@ describe("choices it cannot make", () => {
     const out = await init();
     expect(out.code).toBe(2);
     expect(out.document.error.code).toBe("choice-needed");
-    expect(out.document.error.next.map((s: { command: string }) => s.command)).toEqual(["npx haau3 init --agent claude-code", "npx haau3 init --no-agent"]);
+    expect(out.document.error.next.map((s: { command: string }) => s.command)).toEqual(["npx haau3 init --no-agent", "npx haau3 init --agent claude-code"]);
     expect(managers.calls()).toEqual([]);
     expect([...filesIn(project).keys()]).toEqual(["package.json"]);
   });
@@ -364,9 +368,35 @@ describe("the coding agents' files", () => {
     expect(mcp.status).toBe("warn");
     expect(mcp.message).toContain(".vscode/mcp.json is not plain JSON (it may hold comments)");
     expect(mcp.message).toContain(`To add it yourself: "haau3": {"type":"http","url":"${docs.url}/mcp"} in "servers"`);
-    expect(mcp.message).toContain(".mcp.json already has an entry named haau3 for another server");
-    expect(mcp.message).toContain(".cursor/mcp.json holds a number haau3 could not write back exactly");
+    expect(mcp.message).toContain(".mcp.json already has an entry named haau3 that is not exactly the docs' server");
+    expect(mcp.message).toContain(".cursor/mcp.json is laid out in a way haau3 cannot write back exactly");
     expect(out.document.data.changed.map((c: { file: string }) => c.file)).not.toContain(".mcp.json");
+  });
+
+  it("never calls a planted haau3 entry set up, even one that names the docs' address", async () => {
+    // A server the agent would run, beside the docs' address: an agent reads an entry with a command as one to run.
+    const planted = `${JSON.stringify({ mcpServers: { haau3: { command: "sh", args: ["-c", "echo"], url: `${docs.url}/mcp` } } }, null, 2)}\n`;
+    write(".mcp.json", planted);
+    const out = await init(["--agent", "claude-code"]);
+    const mcp = checksOf(out.document).mcp;
+    expect(mcp.status).toBe("warn");
+    expect(mcp.message).not.toContain("already have it");
+    expect(mcp.message).not.toContain("approve it");
+    expect(read(".mcp.json")).toBe(planted);
+  });
+
+  it("never writes through a hard link to a file outside the project", async () => {
+    const elsewhere = mkdtempSync(join(tmpdir(), "cli-init-hardlink-"));
+    try {
+      const outside = join(elsewhere, "mcp.json");
+      writeFileSync(outside, "{}\n");
+      linkSync(outside, join(project, ".mcp.json"));
+      const out = await init(["--agent", "claude-code"]);
+      expect(checksOf(out.document).mcp.message).toContain(".mcp.json has another name on disk (a hard link)");
+      expect(readFileSync(outside, "utf8")).toBe("{}\n");
+    } finally {
+      rmSync(elsewhere, { recursive: true, force: true });
+    }
   });
 
   it("appends to Codex's config, and leaves one that spells mcp_servers another way", async () => {
@@ -383,11 +413,19 @@ describe("the coding agents' files", () => {
     expect(checksOf(out.document).mcp.status).toBe("warn");
   });
 
-  it("updates a skill that differs from the docs', and never writes through a link", async () => {
+  it("replaces any skill file that differs from the docs', and fails on a link where the skill goes", async () => {
     write(".claude/skills/haau3/SKILL.md", "an older skill\n");
     const out = await init(["--agent", "claude-code"]);
     expect(read(".claude/skills/haau3/SKILL.md")).toBe(SKILL);
     expect(out.document.data.changed).toContainEqual({ file: ".claude/skills/haau3/SKILL.md", action: "updated" });
+
+    // Planted text that is not text, or too large to read, is still haau3's folder: replaced.
+    for (const planted of [Buffer.from("---\nname: haau3\n---\n\u0000hidden\n"), Buffer.alloc(300 * 1024, 0x61)]) {
+      writeFileSync(join(project, ".claude/skills/haau3/SKILL.md"), planted);
+      const again = await init(["--agent", "claude-code"]);
+      expect(again.code).toBe(0);
+      expect(read(".claude/skills/haau3/SKILL.md")).toBe(SKILL);
+    }
 
     const elsewhere = mkdtempSync(join(tmpdir(), "cli-init-elsewhere-"));
     try {
@@ -398,7 +436,8 @@ describe("the coding agents' files", () => {
         return; // This system makes no links for this user; the check above still ran.
       }
       const linked = await init(["--agent", "codex"]);
-      expect(checksOf(linked.document).skill).toMatchObject({ status: "warn" });
+      expect(linked.code).toBe(1);
+      expect(checksOf(linked.document).skill).toMatchObject({ status: "fail" });
       expect(checksOf(linked.document).skill.message).toContain(".agents is a link, which haau3 does not write through");
       expect(filesIn(elsewhere).size).toBe(0);
     } finally {
@@ -428,6 +467,29 @@ describe("the coding agents' files", () => {
     expect(read(".claude/skills/haau3/SKILL.md")).toBe(SKILL);
     // The docs get no key and no session.
     expect(docs.requests.every((r) => r.headers.authorization === undefined && r.headers.cookie === undefined)).toBe(true);
+  });
+
+  it("names any docs address HAAU3_DOCS_URL sets in place of docs.haau3.com, as a warning", async () => {
+    const other = await init(["--agent", "claude-code"]);
+    const host = new URL(docs.url).host;
+    for (const name of ["skill", "mcp"] as const) {
+      expect(checksOf(other.document)[name].status).toBe("warn");
+      expect(checksOf(other.document)[name].message).toContain(`From ${host}, as HAAU3_DOCS_URL asks, in place of docs.haau3.com.`);
+    }
+
+    // docs.haau3.com itself, here a stand-in fetch: no warning, and the docs' own address in the entry.
+    rmSync(join(project, ".claude"), { recursive: true, force: true });
+    rmSync(join(project, ".mcp.json"));
+    const asked: string[] = [];
+    const docsFetch = (async (input: string | URL | Request) => {
+      asked.push(String(input));
+      return new Response(SKILL, { status: 200, headers: { "content-type": "text/markdown" } });
+    }) as typeof fetch;
+    const own = await init(["--agent", "claude-code"], { env: { HAAU3_DOCS_URL: "" }, io: { fetch: docsFetch } });
+    expect(asked).toEqual(["https://docs.haau3.com/skill.md"]);
+    expect(checksOf(own.document).skill.status).toBe("pass");
+    expect(checksOf(own.document).mcp.status).toBe("pass");
+    expect(JSON.parse(read(".mcp.json"))).toEqual({ mcpServers: { haau3: { type: "http", url: "https://docs.haau3.com/mcp" } } });
   });
 });
 
@@ -470,13 +532,92 @@ describe("the env file", () => {
     write("pyproject.toml", '[project]\nname = "app"\ndependencies = ["haau3>=0.4.4"]\n');
     write("uv.lock", "");
     const uv = await init(["--no-agent"]);
-    expect(uv.document.data.next[0].command).toBe("uv run --env-file .env <your program>");
+    expect(uv.document.data.next.at(-1).command).toBe("uv run --env-file .env <your program>");
   });
 
-  it("names only doctor after the loader once a key is found", async () => {
+  it("names only doctor, then the loader, once a key is found", async () => {
     const key = ["haau3", "sk", "live", "K".repeat(40)].join("_");
     const out = await init(["--no-agent"], { env: { HAAU3_API_KEY: key } });
-    expect(out.document.data.next.map((s: { command: string }) => s.command)).toEqual(["node --env-file-if-exists=.env <your program>", "npx haau3 doctor"]);
+    expect(out.document.data.next.map((s: { command: string }) => s.command)).toEqual(["npx haau3 doctor", "node --env-file-if-exists=.env <your program>"]);
     expect(out.stdout).not.toContain(key);
+  });
+
+  // keys create wrote a Vite project's key to .env.local before Vite was found not to load it.
+  it("finds a key in a file the loader does not read: never committed, and moved rather than made again", async () => {
+    write("package.json", JSON.stringify({ dependencies: { "@haau3/sdk": "^0.4.4" }, devDependencies: { vite: "8.0.0" } }));
+    const key = ["haau3", "sk", "live", "V".repeat(40)].join("_");
+    write(".env.local", `HAAU3_API_KEY=${key}\n`);
+    git("init", "-q");
+    write(".gitignore", ".env\n");
+    const exposed = await init(["--no-agent"]);
+    expect(exposed.code).toBe(1);
+    expect(exposed.document.error).toMatchObject({ code: "env-file-not-ignored", gitignore: { file: ".gitignore", line: ".env.local" } });
+    expect(exposed.stdout).not.toContain(key);
+
+    write(".gitignore", ".env\n.env.local\n");
+    const ignored = await init(["--no-agent"]);
+    expect(ignored.code).toBe(0);
+    const env = checksOf(ignored.document)["env-file-ignored"];
+    expect(env.status).toBe("warn");
+    expect(env.message).toContain(".env.local also holds HAAU3_API_KEY, which this project's loader does not read: only Next.js loads it. Move the key to .env.");
+    const commands = ignored.document.data.next.map((s: { command: string }) => s.command);
+    expect(commands).not.toContain("npx haau3 keys create");
+    expect(commands).not.toContain("npx haau3 login");
+  });
+
+  it("says a file that sets the key to nothing sets it, not that it holds the key", async () => {
+    write(".env", "HAAU3_API_KEY=\n");
+    git("init", "-q");
+    write(".gitignore", ".env\n");
+    const out = await init(["--no-agent"]);
+    expect(checksOf(out.document)["env-file-ignored"].message).toContain("git ignores .env, which sets HAAU3_API_KEY.");
+  });
+});
+
+describe("what a run of a package manager may touch and show", () => {
+  it("reports a workspace's lockfile written above the project, even with the manager named", async () => {
+    git("init", "-q");
+    write("package.json", "{}");
+    write("pnpm-lock.yaml", "");
+    write("package-lock.json", "{}");
+    write("app/package.json", "{}");
+    const out = await runCli(["init", "--no-agent", "--package-manager", "pnpm"], { cwd: join(project, "app"), env: environment({ STANDIN_MODE: "up" }) });
+    const changed = JSON.parse(out.stdout).data.changed.map((c: { file: string }) => c.file);
+    expect(changed).toEqual(["package.json", join("..", "pnpm-lock.yaml")]);
+  });
+
+  it("gives the package manager no API key, and shows its words only to a person at a terminal", async () => {
+    write("package.json", "{}");
+    const key = ["haau3", "sk", "test", "P".repeat(40)].join("_");
+    const agent = await runCli(["init", "--no-agent"], { cwd: project, env: environment({ HAAU3_API_KEY: key, HAAU3_OUTPUT: "text" }) });
+    expect(managers.calls()[0]?.keyInEnv).toBe(false);
+    expect(agent.stdout).not.toContain("the stand-in says hello");
+
+    write("package.json", "{}");
+    const person = await init(["--no-agent"], { tty: true, io: { stdin: { isTTY: true } } });
+    expect(person.stdout).toContain("the stand-in says hello");
+  });
+
+  it("keeps a skill already in place when the docs cannot be read, as a warning", async () => {
+    write("package.json", JSON.stringify({ dependencies: { "@haau3/sdk": "^0.4.4" } }));
+    expect((await init(["--agent", "claude-code"])).code).toBe(0);
+    docs.mode = "missing";
+    const out = await init(["--agent", "claude-code"]);
+    expect(out.code).toBe(0);
+    expect(checksOf(out.document).skill).toMatchObject({ status: "warn" });
+    expect(checksOf(out.document).skill.message).toContain("kept as it is, not checked as current");
+    rmSync(join(project, ".claude"), { recursive: true, force: true });
+    expect((await init(["--agent", "claude-code"])).code).toBe(1);
+  });
+
+  it("refuses a docs address that holds a key, and keeps every other flag in a refusal's next step", async () => {
+    write("package.json", "{}");
+    const key = ["haau3", "sk", "live", "D".repeat(40)].join("_");
+    const docsKey = await init(["--no-agent"], { env: { HAAU3_DOCS_URL: `https://docs.example/${key}` } });
+    expect(docsKey.document.error.code).toBe("invalid-docs-url");
+    expect(docsKey.stdout).not.toContain(key);
+
+    const file = await init(["--no-agent", "--file", "notes.txt"]);
+    expect(file.document.error).toMatchObject({ code: "invalid-file", next: [{ command: "npx haau3 init --no-agent" }] });
   });
 });

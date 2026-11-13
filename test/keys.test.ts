@@ -170,6 +170,17 @@ describe("keys create, signed in", () => {
     expect(read(".env")).toBe(`HAAU3_API_KEY=${newKey("live")}\nPORT=3000\n`);
   });
 
+  it("says a named .env.local is not read by default outside Next.js, as in a Vite project", async () => {
+    writeFileSync(join(project, "package.json"), JSON.stringify({ devDependencies: { vite: "8.0.0" } }));
+    const vite = json((await cli(["keys", "create", "--file", ".env.local"])).stdout).data;
+    expect(vite.warnings.find((w: { code: string }) => w.code === "env-file-not-default")?.message).toContain("This project's loader reads .env by default.");
+    await signIn();
+    rmSync(join(project, ".env.local"));
+    writeFileSync(join(project, "package.json"), JSON.stringify({ dependencies: { next: "16.0.0" } }));
+    const next = json((await cli(["keys", "create", "--file", ".env.local"])).stdout).data;
+    expect(next.warnings.map((w: { code: string }) => w.code)).not.toContain("env-file-not-default");
+  });
+
   it("writes to --file, which must name an env file, and says when the defaults will not read it", async () => {
     const out = await cli(["keys", "create", "--file", "prod.env"]);
     expect(out.code).toBe(0);

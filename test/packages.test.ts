@@ -36,11 +36,33 @@ describe("how far up it looks", () => {
 
   it("takes a uv workspace's lock from the folder above, and the project's own Pipfile first", () => {
     write(join(outer, ".git", "HEAD"));
+    write(join(outer, "pyproject.toml"), "[tool.uv.workspace]\nmembers = [\"svc\"]\n");
     write(join(outer, "uv.lock"));
     write(join(outer, "svc", "pyproject.toml"), '[project]\nname = "svc"\n');
     expect(detectManager({ language: "python", cwd: join(outer, "svc"), env: {}, home: join(outer, "nowhere") })).toMatchObject({ ok: true, found: { manager: "uv", how: "lockfile" } });
     write(join(outer, "svc", "Pipfile"), "[packages]\n");
     expect(detectManager({ language: "python", cwd: join(outer, "svc"), env: {}, home: join(outer, "nowhere") })).toMatchObject({ ok: true, found: { manager: "pipenv", how: "project-file" } });
+  });
+
+  it("takes no Poetry or Pipenv lock from a folder above, nor a lockfile above where no project is, nor one in the home folder", () => {
+    write(join(outer, ".git", "HEAD"));
+    write(join(outer, "pyproject.toml"), "[tool.poetry]\nname = 'root'\n");
+    write(join(outer, "poetry.lock"));
+    write(join(outer, "Pipfile.lock"), "{}");
+    write(join(outer, "svc", "requirements.txt"), "requests\n");
+    expect(detectManager({ language: "python", cwd: join(outer, "svc"), env: {}, home: join(outer, "nowhere") })).toMatchObject({ ok: true, found: { manager: "pip" } });
+
+    // A lockfile in a folder above with no package.json beside it is no workspace's.
+    write(join(outer, "pnpm-lock.yaml"));
+    write(join(outer, "web", "package.json"), "{}");
+    expect(detectManager({ language: "node", cwd: join(outer, "web"), env: {}, home: join(outer, "nowhere") })).toMatchObject({ ok: true, found: { manager: "npm", how: "default" } });
+
+    // The home folder is never read, even as the repository's own top.
+    const home = join(outer, "me");
+    write(join(home, "yarn.lock"));
+    write(join(home, "package.json"), JSON.stringify({ packageManager: "pnpm@10.0.0" }));
+    write(join(home, "app", "package.json"), "{}");
+    expect(detectManager({ language: "node", cwd: join(home, "app"), env: {}, home })).toMatchObject({ ok: true, found: { manager: "npm", how: "default" } });
   });
 
   it("reports two tools a project's files both name", () => {

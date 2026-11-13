@@ -1,12 +1,13 @@
 // Running a project's own tools: found by full path on PATH and never in the project or a
 // node_modules folder, a Windows .cmd shim started through cmd.exe with nothing it would expand, a
 // time limit kept, and only haau3's own constant arguments passed.
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
+import { PassThrough } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { findProgram, runProgram, shimLine } from "../src/run.js";
-import { parseChoice } from "../src/terminal.js";
+import { childEnv, findProgram, runProgram, shimLine } from "../src/run.js";
+import { askOnTerminal, parseChoice } from "../src/terminal.js";
 
 let root: string;
 /** The project a program is run for: never the folder its tools are in. */
@@ -89,7 +90,66 @@ describe("running a program", () => {
   });
 });
 
+describe("what a program is given, and what stopping it reaches", () => {
+  it("stops every program it started when it runs past its time, so nothing writes after", async () => {
+    const tools = join(root, "tools");
+    const marker = join(root, "written-late");
+    // It starts a program of its own that would write a file after the limit, as a launcher handing over does.
+    program(
+      tools,
+      "launcher",
+      `import { spawn } from "node:child_process";\nspawn(process.execPath, ["-e", "setTimeout(() => require('node:fs').writeFileSync(process.argv[1], 'x'), 3000)", ${JSON.stringify(marker)}], { stdio: "ignore" });\nsetTimeout(() => {}, 60_000);\n`,
+    );
+    const found = findProgram("launcher", { PATH: tools, Path: tools }, away, process.platform, [".exe", ".cmd"])!;
+    expect(await runProgram(found, [], { cwd: away, env: { ...process.env }, timeoutMs: 1_000 })).toEqual({ kind: "timed-out" });
+    await new Promise((resolve) => setTimeout(resolve, 4_000));
+    expect(existsSync(marker)).toBe(false);
+  });
+
+  it("gives a program no variable that holds an API key", () => {
+    const key = ["haau3", "sk", "live", "E".repeat(40)].join("_");
+    expect(childEnv({ PATH: "/bin", HAAU3_API_KEY: key, OTHER: `x${key}`, KEEP: "1" })).toEqual({ PATH: "/bin", KEEP: "1" });
+  });
+
+  it("refuses to start a Windows shim in a network folder, which cmd.exe cannot start in", async () => {
+    const shim = { path: "C:\\Program Files\\nodejs\\npm.cmd", shim: true };
+    expect(await runProgram(shim, ["install"], { cwd: "\\\\server\\share\\app", env: {}, timeoutMs: 1_000, platform: "win32" })).toEqual({ kind: "not-started", why: "network-folder" });
+  });
+
+  it("skips Yarn's folder of the project's dependencies' programs, and the project reached through a link", () => {
+    const berry = join(root, "xfs-123", "dlx");
+    const real = join(root, "tools");
+    program(berry, "npm", "");
+    program(real, "npm", "");
+    const env = { PATH: [berry, real].join(delimiter), Path: [berry, real].join(delimiter), BERRY_BIN_FOLDER: berry };
+    expect(findProgram("npm", env, away, process.platform, [".exe", ".cmd"])?.path.startsWith(real)).toBe(true);
+
+    const link = join(root, "project-link");
+    try {
+      symlinkSync(away, link, "dir");
+    } catch {
+      return; // This system makes no links for this user.
+    }
+    program(join(away, "bin"), "npm", "");
+    const throughLink = join(link, "bin");
+    expect(findProgram("npm", { PATH: [throughLink, real].join(delimiter), Path: [throughLink, real].join(delimiter) }, away, process.platform, [".exe", ".cmd"])?.path.startsWith(real)).toBe(true);
+  });
+});
+
 describe("reading a person's choice", () => {
+  it("takes no choice when the input ends, as Ctrl-D ends it", async () => {
+    const stdin = new PassThrough();
+    const stdout = new PassThrough();
+    stdout.resume();
+    const asked = askOnTerminal(stdin as unknown as NodeJS.ReadStream, stdout as unknown as NodeJS.WriteStream)("Which?", ["a", "b"], false);
+    stdin.end();
+    expect(await asked).toBeNull();
+    const again = new PassThrough();
+    const answered = askOnTerminal(again as unknown as NodeJS.ReadStream, stdout as unknown as NodeJS.WriteStream)("Which?", ["a", "b"], false);
+    again.write("2\n");
+    expect(await answered).toEqual([1]);
+  });
+
   it("takes one number, or several for a question that allows them, and nothing else", () => {
     expect(parseChoice("2", 3, false)).toEqual([1]);
     expect(parseChoice(" 1, 3 ", 3, true)).toEqual([0, 2]);

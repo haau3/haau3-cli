@@ -13,7 +13,10 @@ const STAND_IN = `// A stand-in package manager: it records its name, arguments 
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 const [name, ...args] = process.argv.slice(2);
-appendFileSync(process.env.STANDIN_LOG, JSON.stringify({ name, args, cwd: process.cwd() }) + "\\n");
+// Whether any variable it was given holds an API key: none may.
+const keyInEnv = Object.values(process.env).some((value) => /haau3_sk_/i.test(value ?? ""));
+appendFileSync(process.env.STANDIN_LOG, JSON.stringify({ name, args, cwd: process.cwd(), keyInEnv }) + "\\n");
+process.stdout.write("the stand-in says hello\\n");
 if (process.env.STANDIN_MODE === "fail") {
   process.stderr.write("the stand-in failed on purpose\\n");
   process.exit(3);
@@ -24,7 +27,8 @@ if (name in lockfiles) {
   const manifest = JSON.parse(readFileSync(join(cwd, "package.json"), "utf8"));
   manifest.dependencies = { ...(manifest.dependencies ?? {}), "@haau3/sdk": "^0.4.4" };
   writeFileSync(join(cwd, "package.json"), JSON.stringify(manifest, null, 2) + "\\n");
-  writeFileSync(join(cwd, lockfiles[name]), "lock\\n");
+  // A workspace's members share one lockfile at its top.
+  writeFileSync(join(cwd, process.env.STANDIN_MODE === "up" ? ".." : ".", lockfiles[name]), "lock\\n");
 } else if (name === "uv" || name === "poetry") {
   const file = join(cwd, "pyproject.toml");
   writeFileSync(file, readFileSync(file, "utf8").replace("dependencies = []", 'dependencies = ["haau3>=0.4.4"]'));
@@ -42,8 +46,8 @@ export interface StandIns {
   /** The folder the launchers are in, for PATH. */
   bin: string;
   log: string;
-  /** What each launcher was asked, in order. */
-  calls(): { name: string; args: string[]; cwd: string }[];
+  /** What each launcher was asked, in order, and whether a key reached its environment. */
+  calls(): { name: string; args: string[]; cwd: string; keyInEnv?: boolean }[];
 }
 
 /** Launchers for the managers named, in a folder outside any project. */
