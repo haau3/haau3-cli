@@ -49,12 +49,12 @@
     "tsdown": "0.23.7",
     "tsx": "^4.23.15",
     "typescript": "6.0.3",
-    "typescript-eslint": "^8.72.1",
+    "typescript-eslint": "^8.72.2",
     "vitest": "^5.1.0",
     "yaml": "^2.9.1"
   },
   "dependencies": {
-    "@haau3/sdk": "0.4.2",
+    "@haau3/sdk": "0.4.4",
     "@napi-rs/keyring": "2.1.2"
   }
 }
