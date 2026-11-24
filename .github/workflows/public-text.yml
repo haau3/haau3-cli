@@ -4,7 +4,9 @@ name: Public text
 # messages a pull request brings, and the pull request's title and description, which become the
 # squash commit on main (scripts/check-public-text.ts). It runs again when the title or description
 # is edited. Dependabot's title, description and commits quote other projects' release notes, so
-# only the files are checked on its pull requests.
+# only the files are checked on its pull requests. An edit to a closed pull request changes only
+# its title and description, so those alone are checked: its commits were checked while it was
+# open, and its branch may be gone.
 
 on:
   pull_request:
@@ -39,11 +41,14 @@ jobs:
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_BODY: ${{ github.event.pull_request.body }}
           AUTHOR: ${{ github.event.pull_request.user.login }}
+          STATE: ${{ github.event.pull_request.state }}
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
           if [ "$AUTHOR" = "dependabot[bot]" ]; then
             pnpm check:public-text
+          elif [ "$STATE" != "open" ]; then
+            pnpm check:public-text --no-files --text-env PR_TITLE --text-env PR_BODY
           else
             pnpm check:public-text --commits "$BASE..$HEAD" --text-env PR_TITLE --text-env PR_BODY
           fi
