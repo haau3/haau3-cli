@@ -1,5 +1,6 @@
 // The workflows: what npm's trusted publisher depends on, what CI proves on each system, and what
 // keeps haau3-bot's token honest.
+import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
@@ -100,6 +101,23 @@ describe("public-text.yml", () => {
     expect(run).toContain('--commits "$BASE..$HEAD" --text-env PR_TITLE --text-env PR_BODY');
     // The title and description reach the script as variables, never as text in the script.
     expect(run).not.toContain("github.event");
+  });
+
+  // An edit to a closed pull request checks its title and description alone: its commits were checked
+  // while it was open, and its branch may be gone. The step's own script runs, with the checker as echo.
+  it("checks a closed pull request's title and description alone", () => {
+    expect(publicText.jobs.check.steps.at(-1).env.STATE).toBe("${{ github.event.pull_request.state }}");
+    const script = run.replaceAll("pnpm check:public-text", "echo check");
+    const ran = (env: Record<string, string>) =>
+      execFileSync("bash", ["-c", script], {
+        env: { AUTHOR: "someone", STATE: "open", BASE: "b", HEAD: "h", PATH: "/usr/bin:/bin", ...env },
+        encoding: "utf8",
+      });
+    expect(ran({ STATE: "closed" })).toBe("check --no-files --text-env PR_TITLE --text-env PR_BODY\n");
+    // The control: an open pull request's commits are read as well.
+    expect(ran({ STATE: "open" })).toBe("check --commits b..h --text-env PR_TITLE --text-env PR_BODY\n");
+    // And Dependabot's files alone, open or closed.
+    expect(ran({ AUTHOR: "dependabot[bot]", STATE: "closed" })).toBe("check\n");
   });
 });
 
