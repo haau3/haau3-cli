@@ -110,7 +110,8 @@ describe("public-text.yml", () => {
     const script = run.replaceAll("pnpm check:public-text", "echo check");
     const ran = (env: Record<string, string>) =>
       execFileSync("bash", ["-c", script], {
-        env: { AUTHOR: "someone", STATE: "open", BASE: "b", HEAD: "h", PATH: "/usr/bin:/bin", ...env },
+        // The runner's own PATH, so bash is found where it is: Git Bash on Windows.
+        env: { AUTHOR: "someone", STATE: "open", BASE: "b", HEAD: "h", PATH: process.env.PATH ?? "", ...env },
         encoding: "utf8",
       });
     expect(ran({ STATE: "closed" })).toBe("check --no-files --text-env PR_TITLE --text-env PR_BODY\n");
