@@ -231,17 +231,26 @@ describe("every answer, sorted", () => {
     expect(production.code).toBe(0);
   });
 
-  it("sorts the Sandbox's not-the-example by its code, from the FHIR base and from a problem", async () => {
+  it("sorts the Sandbox's not-the-example by its code, from the OperationOutcome the FHIR base answers", async () => {
     const notTheExample = {
       resourceType: "OperationOutcome",
       issue: [{ severity: "error", code: "business-rule", details: { coding: [{ system: "https://haau3.com/fhir/CodeSystem/sandbox-error", code: "not-the-example" }] } }],
     };
-    for (const respond of [() => fhir(400, notTheExample), () => json(400, { type: "about:blank", title: "Invalid request", status: 400, code: "not-the-example" })]) {
-      const { fetch } = api(PASSING, (url) => (url.pathname === "/openapi.json" ? json(200, PASSING) : respond()));
-      const { document } = await run(["lookups"], { env: { HAAU3_API_KEY: TEST }, fetch });
-      expect(document.data.calls[0]).toMatchObject({ status: "fail", answer: "not-the-example" });
-      expect(document.data.calls[0].details.problem.code).toBe("not-the-example");
-    }
+    const { fetch } = api(PASSING, (url) => (url.pathname === "/openapi.json" ? json(200, PASSING) : fhir(400, notTheExample)));
+    const { document } = await run(["lookups"], { env: { HAAU3_API_KEY: TEST }, fetch });
+    expect(document.data.calls[0]).toMatchObject({ status: "fail", answer: "not-the-example" });
+    expect(document.data.calls[0].details.problem.code).toBe("not-the-example");
+  });
+
+  it("reads a refusal's code from an OperationOutcome only, as the SDK does since 0.5: a problem's is not read", async () => {
+    // Every service is on the FHIR base, whose refusals are OperationOutcomes; a problem from the host
+    // is still a refusal, with its status and no code.
+    const problem = { type: "about:blank", title: "Invalid request", status: 400, code: "not-the-example" };
+    const { fetch } = api(PASSING, (url) => (url.pathname === "/openapi.json" ? json(200, PASSING) : json(400, problem)));
+    const { document } = await run(["lookups"], { env: { HAAU3_API_KEY: TEST }, fetch });
+    expect(document.data.calls[0]).toMatchObject({ status: "fail", answer: "refused" });
+    expect(document.data.calls[0].details.problem).toMatchObject({ status: 400 });
+    expect(document.data.calls[0].details.problem.code).toBeUndefined();
   });
 
   it("reads at a terminal: one line per call, the tally, and what it does not claim", async () => {
