@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.12](https://github.com/haau3/haau3-cli/compare/v0.1.11...v0.1.12) (2026-11-25)
+
+
+### Bug Fixes
+
+* the command line runs on @haau3/sdk 0.5.3 ([#29](https://github.com/haau3/haau3-cli/issues/29)) ([b464e38](https://github.com/haau3/haau3-cli/commit/b464e38acc4a1a78f45650ea116602e0af9d0cd2))
+
 ## [0.1.11](https://github.com/haau3/haau3-cli/compare/v0.1.10...v0.1.11) (2026-11-13)
 
 

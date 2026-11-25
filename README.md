@@ -255,7 +255,7 @@ The document:
 {
   "formatVersion": "1.3",
   "cli": "haau3",
-  "cliVersion": "0.1.11",
+  "cliVersion": "0.1.12",
   "command": null,
   "ok": false,
   "environment": null,
